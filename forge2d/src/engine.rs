@@ -2,14 +2,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use winit::{
-    dpi::LogicalSize,
+    dpi::{LogicalSize, PhysicalSize},
     event::{ElementState, Event, KeyboardInput, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
     window::WindowBuilder,
 };
 
-use crate::input::InputState;
+use crate::{input::InputState, render::Renderer};
 
 /// Configuration values for the engine window and runtime behavior.
 #[derive(Debug, Clone)]
@@ -65,13 +65,15 @@ impl Engine {
 
     /// Run the provided game until the window is closed or the game requests exit.
     pub fn run<G: Game + 'static>(self, mut game: G) -> Result<()> {
+        let config = self.config;
+
         let mut event_loop = EventLoop::new();
         let window = WindowBuilder::new()
-            .with_title(self.config.title)
-            .with_inner_size(LogicalSize::new(self.config.width, self.config.height))
+            .with_title(config.title.clone())
+            .with_inner_size(LogicalSize::new(config.width, config.height))
             .build(&event_loop)?;
 
-        let mut ctx = EngineContext::new(window);
+        let mut ctx = EngineContext::new(window, &config)?;
         game.init(&mut ctx)?;
 
         let mut last_frame = Instant::now();
@@ -95,6 +97,12 @@ impl Engine {
                             if is_escape_pressed(input) {
                                 *control_flow = ControlFlow::Exit;
                             }
+                        }
+                        WindowEvent::Resized(new_size) => {
+                            ctx.resize_renderer(new_size);
+                        }
+                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                            ctx.resize_renderer(*new_inner_size);
                         }
                         _ => {}
                     }
@@ -155,17 +163,21 @@ pub struct EngineContext {
     elapsed_time: Duration,
     exit_requested: bool,
     input: InputState,
+    renderer: Renderer,
 }
 
 impl EngineContext {
-    fn new(window: winit::window::Window) -> Self {
-        Self {
+    fn new(window: winit::window::Window, config: &EngineConfig) -> Result<Self> {
+        let renderer = Renderer::new(&window, config.vsync)?;
+
+        Ok(Self {
             window,
             delta_time: Duration::ZERO,
             elapsed_time: Duration::ZERO,
             exit_requested: false,
             input: InputState::new(),
-        }
+            renderer,
+        })
     }
 
     fn begin_frame(&mut self) {
@@ -188,6 +200,10 @@ impl EngineContext {
             }
             _ => {}
         }
+    }
+
+    fn resize_renderer(&mut self, new_size: PhysicalSize<u32>) {
+        self.renderer.resize(new_size);
     }
 
     /// Duration between the current and previous frames.
@@ -213,6 +229,11 @@ impl EngineContext {
     /// Request that the engine exit after the current frame.
     pub fn request_exit(&mut self) {
         self.exit_requested = true;
+    }
+
+    /// Access the renderer for drawing operations.
+    pub fn renderer(&mut self) -> &mut Renderer {
+        &mut self.renderer
     }
 }
 
