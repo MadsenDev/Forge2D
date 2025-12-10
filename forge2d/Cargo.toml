@@ -1,0 +1,14 @@
+[package]
+name = "forge2d"
+version = "0.1.0"
+edition = "2021"
+authors = ["Forge2D Contributors"]
+license = "MIT OR Apache-2.0"
+description = "A lightweight 2D game framework built with winit."
+repository = "https://example.com/forge2d"
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+thiserror.workspace = true
+winit.workspace = true
