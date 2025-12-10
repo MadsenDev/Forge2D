@@ -1,0 +1,17 @@
+[workspace]
+members = [
+    "forge2d",
+    "examples/basic_game",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+authors = ["Forge2D Contributors"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1"
+log = "0.4"
+thiserror = "1"
+winit = "0.28"
