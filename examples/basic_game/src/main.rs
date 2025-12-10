@@ -37,12 +37,9 @@ impl Game for BasicGame {
     }
 
     fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
-        let dt = ctx.delta_time();
-        let (mouse_x, mouse_y) = ctx.input().mouse_position();
-        println!(
-            "Frame {} | dt = {:.4?} | mouse=({:.1}, {:.1})",
-            self.frames, dt, mouse_x, mouse_y
-        );
+        let frame = ctx.renderer().begin_frame()?;
+        ctx.renderer().clear(&frame, [0.1, 0.2, 0.3, 1.0])?;
+        ctx.renderer().end_frame(frame)?;
         Ok(())
     }
 }

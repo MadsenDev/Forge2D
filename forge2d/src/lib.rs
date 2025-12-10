@@ -4,7 +4,9 @@
 
 pub mod engine;
 pub mod input;
+pub mod render;
 
 pub use crate::engine::{Engine, EngineConfig, EngineContext, Game};
 pub use crate::input::InputState;
+pub use crate::render::{Frame, Renderer};
 pub use winit::event::{MouseButton, VirtualKeyCode};

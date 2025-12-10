@@ -1,6 +1,6 @@
 # TODO
 
-**Current phase:** Phase 2 – Input system (complete)
+**Current phase:** Phase 3 – Basic 2D rendering with wgpu (complete)
 
 ## Phase 1 – Core engine API + game loop skeleton
 - [x] Define public entrypoints (`Engine`, `EngineConfig`, `Game`, `EngineContext`).
@@ -14,9 +14,9 @@
 - [x] Expose input querying through `EngineContext` and validate via example usage.
 
 ## Phase 3 – Basic 2D rendering with wgpu
-- [ ] Add `render` module with `Renderer` wrapper over `WgpuBackend` (init, resize, begin/clear/end frame).
-- [ ] Initialize the renderer in the engine loop and surface errors gracefully.
-- [ ] Extend `EngineContext` with renderer access and update example to clear the screen.
+- [x] Add `render` module with `Renderer` wrapper over `WgpuBackend` (init, resize, begin/clear/end frame).
+- [x] Initialize the renderer in the engine loop and surface errors gracefully.
+- [x] Extend `EngineContext` with renderer access and update example to clear the screen.
 
 ## Phase 4 – Sprites, textures, and camera
 - [ ] Introduce math helpers (`Vec2`, `Transform2D`) for positioning and scaling.
