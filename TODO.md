@@ -1,6 +1,6 @@
 # TODO
 
-**Current phase:** Phase 3 – Basic 2D rendering with wgpu (complete)
+**Current phase:** Phase 4 – Sprites, textures, and camera (complete)
 
 ## Phase 1 – Core engine API + game loop skeleton
 - [x] Define public entrypoints (`Engine`, `EngineConfig`, `Game`, `EngineContext`).
@@ -19,9 +19,9 @@
 - [x] Extend `EngineContext` with renderer access and update example to clear the screen.
 
 ## Phase 4 – Sprites, textures, and camera
-- [ ] Introduce math helpers (`Vec2`, `Transform2D`) for positioning and scaling.
-- [ ] Implement sprite and camera types with rendering support (`draw_sprite`).
-- [ ] Load PNG textures and render moving sprites using a simple camera in an example.
+- [x] Introduce math helpers (`Vec2`, `Transform2D`) for positioning and scaling.
+- [x] Implement sprite and camera types with rendering support (`draw_sprite`).
+- [x] Load PNG textures and render moving sprites using a simple camera in an example.
 
 ## Phase 5 – Assets and audio
 - [ ] Add `AssetManager` to cache textures (and other future assets) keyed by path/ID.
