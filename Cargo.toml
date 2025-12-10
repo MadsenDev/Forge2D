@@ -17,3 +17,6 @@ thiserror = "1"
 winit = "0.28"
 wgpu = "0.17"
 pollster = "0.3"
+bytemuck = { version = "1", features = ["derive"] }
+glam = "0.24"
+image = { version = "0.24", default-features = false, features = ["png"] }
