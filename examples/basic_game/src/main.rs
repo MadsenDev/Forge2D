@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use forge2d::{Engine, EngineContext, Game};
+use forge2d::{Engine, EngineContext, Game, VirtualKeyCode};
 
 struct BasicGame {
     frames: u64,
@@ -19,6 +19,11 @@ impl Game for BasicGame {
     fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
         self.frames += 1;
 
+        if ctx.input().is_key_pressed(VirtualKeyCode::Space) {
+            println!("Space pressed – requesting exit.");
+            ctx.request_exit();
+        }
+
         if ctx.elapsed_time() > Duration::from_secs(3) {
             println!(
                 "Ran for {:.2?} across {} frames; requesting exit.",
@@ -33,7 +38,11 @@ impl Game for BasicGame {
 
     fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
         let dt = ctx.delta_time();
-        println!("Frame {} | dt = {:.4?}", self.frames, dt);
+        let (mouse_x, mouse_y) = ctx.input().mouse_position();
+        println!(
+            "Frame {} | dt = {:.4?} | mouse=({:.1}, {:.1})",
+            self.frames, dt, mouse_x, mouse_y
+        );
         Ok(())
     }
 }

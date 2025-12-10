@@ -9,6 +9,8 @@ use winit::{
     window::WindowBuilder,
 };
 
+use crate::input::InputState;
+
 /// Configuration values for the engine window and runtime behavior.
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -79,17 +81,24 @@ impl Engine {
             *control_flow = ControlFlow::Poll;
 
             match event {
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::CloseRequested => {
-                        *control_flow = ControlFlow::Exit;
-                    }
-                    WindowEvent::KeyboardInput { input, .. } => {
-                        if is_escape_pressed(&input) {
+                Event::NewEvents(_) => {
+                    ctx.begin_frame();
+                }
+                Event::WindowEvent { event, .. } => {
+                    ctx.handle_window_event(&event);
+
+                    match event {
+                        WindowEvent::CloseRequested => {
                             *control_flow = ControlFlow::Exit;
                         }
+                        WindowEvent::KeyboardInput { ref input, .. } => {
+                            if is_escape_pressed(input) {
+                                *control_flow = ControlFlow::Exit;
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
+                }
                 Event::MainEventsCleared => {
                     let now = Instant::now();
                     ctx.update_time(now - last_frame);
@@ -145,6 +154,7 @@ pub struct EngineContext {
     delta_time: Duration,
     elapsed_time: Duration,
     exit_requested: bool,
+    input: InputState,
 }
 
 impl EngineContext {
@@ -154,12 +164,30 @@ impl EngineContext {
             delta_time: Duration::ZERO,
             elapsed_time: Duration::ZERO,
             exit_requested: false,
+            input: InputState::new(),
         }
+    }
+
+    fn begin_frame(&mut self) {
+        self.input.begin_frame();
     }
 
     fn update_time(&mut self, delta: Duration) {
         self.delta_time = delta;
         self.elapsed_time += delta;
+    }
+
+    fn handle_window_event(&mut self, event: &WindowEvent) {
+        match event {
+            WindowEvent::KeyboardInput { input, .. } => self.input.handle_key(*input),
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.input.handle_mouse_button(*button, *state)
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input.handle_cursor_moved(position.x, position.y)
+            }
+            _ => {}
+        }
     }
 
     /// Duration between the current and previous frames.
@@ -175,6 +203,11 @@ impl EngineContext {
     /// Access the underlying winit window.
     pub fn window(&self) -> &winit::window::Window {
         &self.window
+    }
+
+    /// Access the current input state.
+    pub fn input(&self) -> &InputState {
+        &self.input
     }
 
     /// Request that the engine exit after the current frame.
