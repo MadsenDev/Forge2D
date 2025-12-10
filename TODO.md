@@ -1,6 +1,6 @@
 # TODO
 
-**Current phase:** Phase 1 – Core engine API + game loop skeleton (complete)
+**Current phase:** Phase 2 – Input system (complete)
 
 ## Phase 1 – Core engine API + game loop skeleton
 - [x] Define public entrypoints (`Engine`, `EngineConfig`, `Game`, `EngineContext`).
@@ -9,9 +9,9 @@
 - [x] Add example game that runs the loop and logs timing.
 
 ## Phase 2 – Input system
-- [ ] Implement `input.rs` with key/mouse state tracking (down/pressed/released and cursor position).
-- [ ] Integrate winit event handling to update `InputState` each frame.
-- [ ] Expose input querying through `EngineContext` and validate via example usage.
+- [x] Implement `input.rs` with key/mouse state tracking (down/pressed/released and cursor position).
+- [x] Integrate winit event handling to update `InputState` each frame.
+- [x] Expose input querying through `EngineContext` and validate via example usage.
 
 ## Phase 3 – Basic 2D rendering with wgpu
 - [ ] Add `render` module with `Renderer` wrapper over `WgpuBackend` (init, resize, begin/clear/end frame).
