@@ -9,7 +9,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-use crate::{input::InputState, render::Renderer};
+use crate::{assets::AssetManager, audio::AudioSystem, input::InputState, render::Renderer};
 
 /// Configuration values for the engine window and runtime behavior.
 #[derive(Debug, Clone)]
@@ -45,12 +45,14 @@ impl Engine {
     }
 
     /// Override the window title.
+    #[must_use]
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.config.title = title.into();
         self
     }
 
     /// Override the initial window size in logical pixels.
+    #[must_use]
     pub fn with_size(mut self, width: u32, height: u32) -> Self {
         self.config.width = width;
         self.config.height = height;
@@ -58,6 +60,7 @@ impl Engine {
     }
 
     /// Enable or disable vertical sync.
+    #[must_use]
     pub fn with_vsync(mut self, vsync: bool) -> Self {
         self.config.vsync = vsync;
         self
@@ -164,11 +167,15 @@ pub struct EngineContext {
     exit_requested: bool,
     input: InputState,
     renderer: Renderer,
+    assets: AssetManager,
+    audio: AudioSystem,
 }
 
 impl EngineContext {
     fn new(window: winit::window::Window, config: &EngineConfig) -> Result<Self> {
         let renderer = Renderer::new(&window, config.vsync)?;
+        // Audio initialization is graceful - engine continues even if audio fails
+        let audio = AudioSystem::new()?;
 
         Ok(Self {
             window,
@@ -177,6 +184,8 @@ impl EngineContext {
             exit_requested: false,
             input: InputState::new(),
             renderer,
+            assets: AssetManager::new(),
+            audio,
         })
     }
 
@@ -234,6 +243,34 @@ impl EngineContext {
     /// Access the renderer for drawing operations.
     pub fn renderer(&mut self) -> &mut Renderer {
         &mut self.renderer
+    }
+
+    /// Access the asset manager for loading and caching assets.
+    pub fn assets(&mut self) -> &mut AssetManager {
+        &mut self.assets
+    }
+
+    /// Load a texture using the asset manager (convenience method).
+    ///
+    /// This is equivalent to `ctx.assets().load_texture(ctx.renderer(), path)`
+    /// but avoids borrowing issues.
+    pub fn load_texture(&mut self, path: &str) -> Result<crate::render::TextureHandle> {
+        self.assets.load_texture(&mut self.renderer, path)
+    }
+
+    /// Load a texture from bytes using the asset manager (convenience method).
+    pub fn load_texture_from_bytes(
+        &mut self,
+        key: &str,
+        bytes: &[u8],
+    ) -> Result<crate::render::TextureHandle> {
+        self.assets
+            .load_texture_from_bytes(&mut self.renderer, key, bytes)
+    }
+
+    /// Access the audio system for playing sounds and music.
+    pub fn audio(&mut self) -> &mut AudioSystem {
+        &mut self.audio
     }
 }
 

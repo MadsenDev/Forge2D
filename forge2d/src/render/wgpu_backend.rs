@@ -82,6 +82,16 @@ pub struct Frame {
     encoder: Option<CommandEncoder>,
 }
 
+impl Drop for Frame {
+    fn drop(&mut self) {
+        // If frame wasn't properly ended, we still need to present the surface texture
+        // to avoid leaking resources. The encoder will be dropped automatically.
+        if let Some(surface_texture) = self.surface_texture.take() {
+            surface_texture.present();
+        }
+    }
+}
+
 struct TextureEntry {
     view: TextureView,
     sampler: Sampler,

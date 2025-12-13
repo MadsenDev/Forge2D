@@ -82,17 +82,32 @@ impl InputState {
 
     /// Returns true if the key is currently held down.
     pub fn is_key_down(&self, key: VirtualKeyCode) -> bool {
-        self.keys_down[key as usize]
+        let idx = key as usize;
+        if idx < self.keys_down.len() {
+            self.keys_down[idx]
+        } else {
+            false
+        }
     }
 
     /// Returns true if the key was pressed this frame.
     pub fn is_key_pressed(&self, key: VirtualKeyCode) -> bool {
-        self.keys_pressed[key as usize]
+        let idx = key as usize;
+        if idx < self.keys_pressed.len() {
+            self.keys_pressed[idx]
+        } else {
+            false
+        }
     }
 
     /// Returns true if the key was released this frame.
     pub fn is_key_released(&self, key: VirtualKeyCode) -> bool {
-        self.keys_released[key as usize]
+        let idx = key as usize;
+        if idx < self.keys_released.len() {
+            self.keys_released[idx]
+        } else {
+            false
+        }
     }
 
     /// Returns true if the mouse button is currently held down.
@@ -119,6 +134,11 @@ impl InputState {
     /// Current mouse cursor position in logical pixels.
     pub fn mouse_position(&self) -> (f32, f32) {
         (self.mouse_x, self.mouse_y)
+    }
+
+    /// Current mouse cursor position as a Vec2.
+    pub fn mouse_position_vec2(&self) -> crate::math::Vec2 {
+        crate::math::Vec2::new(self.mouse_x, self.mouse_y)
     }
 }
 

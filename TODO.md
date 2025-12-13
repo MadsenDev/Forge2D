@@ -1,6 +1,6 @@
 # TODO
 
-**Current phase:** Phase 4 – Sprites, textures, and camera (complete)
+**Current phase:** Phase 5 – Assets and audio (complete)
 
 ## Phase 1 – Core engine API + game loop skeleton
 - [x] Define public entrypoints (`Engine`, `EngineConfig`, `Game`, `EngineContext`).
@@ -24,9 +24,9 @@
 - [x] Load PNG textures and render moving sprites using a simple camera in an example.
 
 ## Phase 5 – Assets and audio
-- [ ] Add `AssetManager` to cache textures (and other future assets) keyed by path/ID.
-- [ ] Wire asset loading helpers into `EngineContext` for renderer access.
-- [ ] Create `audio.rs` with `AudioSystem` wrapping `rodio` and expose playback APIs.
+- [x] Add `AssetManager` to cache textures (and other future assets) keyed by path/ID.
+- [x] Wire asset loading helpers into `EngineContext` for renderer access.
+- [x] Create `audio.rs` with `AudioSystem` wrapping `rodio` and expose playback APIs.
 
 ## Phase 6 – State/scene system
 - [ ] Define `State` trait (`on_enter`, `on_exit`, `update`, `draw`) and `StateMachine` management.
