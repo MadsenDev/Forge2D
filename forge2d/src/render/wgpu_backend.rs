@@ -21,7 +21,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 use crate::{
     math::{Camera2D, Vec2},
     render::sprite::{Sprite, TextureHandle},
-    render::text::{FontHandle, TextRenderer, GlyphCacheEntry},
+    render::text::{FontHandle, GlyphCacheEntry, TextRenderer},
 };
 use ab_glyph::{Font, Glyph, ScaleFont};
 
@@ -86,7 +86,8 @@ impl Renderer {
         height: u32,
     ) -> Result<TextureHandle> {
         // Default to false (sprite texture) for backward compatibility
-        self.backend.load_texture_from_rgba(data, width, height, false)
+        self.backend
+            .load_texture_from_rgba(data, width, height, false)
     }
 
     pub fn texture_size(&self, handle: TextureHandle) -> Option<(u32, u32)> {
@@ -131,7 +132,8 @@ impl Renderer {
         color: [f32; 4],
         camera: &Camera2D,
     ) -> Result<()> {
-        self.backend.draw_text(frame, text, font, size, position, color, camera)
+        self.backend
+            .draw_text(frame, text, font, size, position, color, camera)
     }
 }
 
@@ -306,7 +308,7 @@ impl WgpuBackend {
         self.uniform_write_offset = 0;
         // Clear bind group cache each frame (they're frame-specific)
         self.bind_group_cache.clear();
-        
+
         loop {
             match self.surface.get_current_texture() {
                 Ok(surface_texture) => {
@@ -375,7 +377,10 @@ impl WgpuBackend {
 
         // Check if we've exceeded the maximum sprites per frame
         if self.uniform_write_offset >= UNIFORM_BUFFER_SIZE {
-            return Err(anyhow!("Too many sprites drawn in one frame (max: {})", MAX_SPRITES_PER_FRAME));
+            return Err(anyhow!(
+                "Too many sprites drawn in one frame (max: {})",
+                MAX_SPRITES_PER_FRAME
+            ));
         }
 
         let base_size = Vec2::new(texture.size.0 as f32, texture.size.1 as f32);
@@ -387,15 +392,15 @@ impl WgpuBackend {
             mvp: mvp.to_cols_array_2d(),
             color: sprite.tint,
         };
-        
+
         // Write uniforms at the current offset (aligned to required alignment)
         let aligned_offset = if self.uniform_write_offset == 0 {
             0
         } else {
-            (self.uniform_write_offset + self.sprite_pipeline.uniform_alignment - 1) 
+            (self.uniform_write_offset + self.sprite_pipeline.uniform_alignment - 1)
                 & !(self.sprite_pipeline.uniform_alignment - 1)
         };
-        
+
         self.queue.write_buffer(
             &self.sprite_pipeline.uniform_buffer,
             aligned_offset,
@@ -442,7 +447,7 @@ impl WgpuBackend {
 
         Ok(())
     }
-    
+
     /// Flush all queued sprite draws in a single render pass (called by end_frame)
     fn flush_sprites(&mut self, frame: &mut Frame) -> Result<()> {
         if frame.sprite_draws.is_empty() {
@@ -490,7 +495,7 @@ impl WgpuBackend {
     fn end_frame(&mut self, mut frame: Frame) -> Result<()> {
         // Flush all queued sprite draws in a single render pass
         self.flush_sprites(&mut frame)?;
-        
+
         let encoder = frame
             .encoder
             .take()
@@ -516,7 +521,7 @@ impl WgpuBackend {
         // Regular image textures use linear filtering
         self.load_texture_from_rgba(&image, dimensions.0, dimensions.1, false)
     }
-    
+
     /// Load a texture from raw RGBA8 data (for glyphs, etc.)
     /// `is_font_texture`: if true, uses Nearest filtering for crisp text rendering
     pub(crate) fn load_texture_from_rgba(
@@ -560,7 +565,7 @@ impl WgpuBackend {
         );
 
         let view = texture.create_view(&TextureViewDescriptor::default());
-        
+
         // Filtering mode selection:
         // - Font textures: Nearest for crisp, pixel-perfect rendering
         // - Regular sprites: Linear for smooth scaling
@@ -569,9 +574,13 @@ impl WgpuBackend {
         } else {
             (FilterMode::Linear, FilterMode::Linear)
         };
-        
+
         let sampler = self.device.create_sampler(&SamplerDescriptor {
-            label: Some(if is_font_texture { "font-sampler" } else { "sprite-sampler" }),
+            label: Some(if is_font_texture {
+                "font-sampler"
+            } else {
+                "sprite-sampler"
+            }),
             address_mode_u: AddressMode::ClampToEdge,
             address_mode_v: AddressMode::ClampToEdge,
             address_mode_w: AddressMode::ClampToEdge,
@@ -612,22 +621,25 @@ impl WgpuBackend {
     /// Call this before draw_text() to pre-rasterize glyphs.
     fn ensure_glyphs_rasterized(&mut self, text: &str, font: FontHandle, size: f32) -> Result<()> {
         // Collect characters that need rasterization
-        let mut to_rasterize: Vec<char> = text.chars()
+        let mut to_rasterize: Vec<char> = text
+            .chars()
             .filter(|&ch| !self.text_renderer.has_glyph(font, ch, size))
             .collect();
-        
+
         // Remove duplicates
         to_rasterize.sort();
         to_rasterize.dedup();
-        
+
         // Get font reference first (immutable borrow)
-        let font_ref = self.text_renderer.get_font(font)
+        let font_ref = self
+            .text_renderer
+            .get_font(font)
             .ok_or_else(|| anyhow!("Font not found"))?;
-        
+
         // Rasterize each glyph and collect image data
         // Store all data we need so we can release the font_ref borrow
         let mut glyph_data: Vec<(char, Vec<u8>, u32, u32, f32, f32, f32, f32, f32)> = Vec::new();
-        
+
         for ch in to_rasterize {
             let scale = ab_glyph::PxScale::from(size);
             let scaled_font = font_ref.as_scaled(scale);
@@ -637,17 +649,17 @@ impl WgpuBackend {
                 scale,
                 position: ab_glyph::point(0.0, 0.0),
             };
-            
+
             // Rasterize the glyph - use the trait method (available via ScaleFont import)
             if let Some(outlined) = scaled_font.outline_glyph(glyph) {
                 let bounds = outlined.px_bounds();
                 let width = bounds.width().ceil() as u32;
                 let height = bounds.height().ceil() as u32;
-                
+
                 if width > 0 && height > 0 {
                     // Create RGBA image
                     let mut image_data = vec![0u8; (width * height * 4) as usize];
-                    
+
                     outlined.draw(|x, y, c| {
                         let x = x as u32;
                         let y = y as u32;
@@ -660,22 +672,22 @@ impl WgpuBackend {
                             image_data[idx + 3] = alpha;
                         }
                     });
-                    
+
                     // Get advance width from the font (distance to next character origin)
                     // This is the proper spacing between characters as defined by the font
                     let mut advance = scaled_font.h_advance(glyph_id);
-                    
+
                     // Calculate proper bearing from glyph bounds
                     // bearing_x: horizontal offset from origin to left edge of glyph
                     // bounds.min.x is the left edge of the glyph's bounding box relative to origin
                     // This can be negative for characters that extend left (like italic 'f')
                     let bearing_x = bounds.min.x;
-                    
+
                     // bearing_y: vertical offset from baseline to top of glyph
                     // bounds.min.y is typically negative (above baseline), so we negate it
                     // to get a positive offset downward from the baseline for screen coordinates
                     let bearing_y = -bounds.min.y;
-                    
+
                     // Robustness: Ensure advance is reasonable to prevent character overlap
                     // Some fonts might have very small or zero advances, which causes overlap
                     let glyph_width = bounds.width();
@@ -683,7 +695,7 @@ impl WgpuBackend {
                         // Fallback: use glyph width + small padding if advance is too small
                         advance = glyph_width.max(1.0) + 2.0; // Small padding for safety
                     }
-                    
+
                     glyph_data.push((
                         ch,
                         image_data,
@@ -698,25 +710,32 @@ impl WgpuBackend {
                 }
             }
         }
-        
+
         // font_ref borrow ends here, now we can mutably borrow self
-        
+
         // Now load textures and cache glyphs (mutable borrow of self, no conflict)
-        for (ch, image_data, width, height, bearing_x, bearing_y, width_f, height_f, advance) in glyph_data {
+        for (ch, image_data, width, height, bearing_x, bearing_y, width_f, height_f, advance) in
+            glyph_data
+        {
             // Font textures use Nearest filtering for crisp rendering
             let texture = self.load_texture_from_rgba(&image_data, width, height, true)?;
-            
+
             // Cache the glyph
-            self.text_renderer.cache_glyph(font, ch, size, GlyphCacheEntry {
-                texture,
-                width: width_f,
-                height: height_f,
-                bearing_x,
-                bearing_y,
-                advance,
-            });
+            self.text_renderer.cache_glyph(
+                font,
+                ch,
+                size,
+                GlyphCacheEntry {
+                    texture,
+                    width: width_f,
+                    height: height_f,
+                    bearing_x,
+                    bearing_y,
+                    advance,
+                },
+            );
         }
-        
+
         Ok(())
     }
 
@@ -730,6 +749,12 @@ impl WgpuBackend {
         color: [f32; 4],
         camera: &Camera2D,
     ) -> Result<()> {
+        let font_ref = self
+            .text_renderer
+            .get_font(font)
+            .ok_or_else(|| anyhow!("Font not found"))?;
+        let scaled_font = font_ref.as_scaled(ab_glyph::PxScale::from(size));
+
         // Ensure all glyphs for this text are rasterized and cached before drawing.
         // This makes the API easier to use: callers don't need to remember to
         // call `rasterize_text_glyphs`/`ensure_glyphs_rasterized` separately.
@@ -739,8 +764,18 @@ impl WgpuBackend {
         let mut x = position.x;
         let y = position.y;
 
+        // Track previous glyph for kerning adjustments
+        let mut prev_glyph: Option<ab_glyph::GlyphId> = None;
+
         // Now draw all glyphs
         for ch in text.chars() {
+            let glyph_id = font_ref.glyph_id(ch);
+
+            // Apply kerning between the previous glyph and this one
+            if let Some(prev) = prev_glyph {
+                x += scaled_font.kern(prev, glyph_id);
+            }
+
             // Get glyph data (immutable borrow)
             let (texture_handle, width, height, bearing_x, bearing_y, advance) = {
                 // If for some reason the glyph is still missing from the cache,
@@ -750,8 +785,7 @@ impl WgpuBackend {
                 };
 
                 // Get texture size for proper scaling
-                let texture_size = self.texture_size(glyph.texture)
-                    .unwrap_or((32, 32)); // Fallback if not found
+                let texture_size = self.texture_size(glyph.texture).unwrap_or((32, 32)); // Fallback if not found
 
                 (
                     glyph.texture,
@@ -765,15 +799,12 @@ impl WgpuBackend {
 
             // Create sprite for this glyph (now we can mutably borrow self)
             let mut sprite = Sprite::new(texture_handle);
-            
+
             // Position glyph relative to baseline origin
             // bearing_x offsets the sprite left/right from the origin
             // bearing_y offsets the sprite up/down from the baseline (inverted for screen coords)
             // Nearest filtering ensures crisp rendering without needing integer snapping
-            sprite.transform.position = Vec2::new(
-                x + bearing_x,
-                y - bearing_y,
-            );
+            sprite.transform.position = Vec2::new(x + bearing_x, y - bearing_y);
             sprite.transform.scale = Vec2::new(width, height);
             sprite.tint = color;
 
@@ -783,6 +814,8 @@ impl WgpuBackend {
             // Advance to next character's origin position
             // The advance value from the font already accounts for proper spacing
             x += advance;
+
+            prev_glyph = Some(glyph_id);
         }
 
         Ok(())
@@ -804,7 +837,9 @@ fn create_sprite_pipeline(device: &wgpu::Device, surface_format: TextureFormat) 
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: true, // Enable dynamic offsets
-                    min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<SpriteUniforms>() as u64),
+                    min_binding_size: std::num::NonZeroU64::new(
+                        std::mem::size_of::<SpriteUniforms>() as u64,
+                    ),
                 },
                 count: None,
             },
@@ -844,7 +879,7 @@ fn create_sprite_pipeline(device: &wgpu::Device, surface_format: TextureFormat) 
     let uniform_size = std::mem::size_of::<SpriteUniforms>() as u64;
     // Round up to alignment (not used directly, but kept for reference)
     let _aligned_uniform_size = (uniform_size + uniform_alignment - 1) & !(uniform_alignment - 1);
-    
+
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sprite-uniform-buffer"),
         size: UNIFORM_BUFFER_SIZE,
