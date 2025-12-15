@@ -603,6 +603,7 @@ checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
 name = "forge2d"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "anyhow",
  "bytemuck",
  "glam",
@@ -613,6 +614,14 @@ dependencies = [
  "thiserror",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "full_game"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "forge2d",
 ]
 
 [[package]]
@@ -1610,6 +1619,14 @@ checksum = "246bfa38fe3db3f1dfc8ca5a2cdeb7348c78be2112740cc0ec8ef18b6d94f830"
 dependencies = [
  "bitflags 1.3.2",
  "num-traits",
+]
+
+[[package]]
+name = "state_demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "forge2d",
 ]
 
 [[package]]

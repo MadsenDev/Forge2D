@@ -1,6 +1,6 @@
 # TODO
 
-**Current phase:** Phase 5 – Assets and audio (complete)
+**Current phase:** Phase 6 – State/scene system (complete)
 
 ## Phase 1 – Core engine API + game loop skeleton
 - [x] Define public entrypoints (`Engine`, `EngineConfig`, `Game`, `EngineContext`).
@@ -29,11 +29,16 @@
 - [x] Create `audio.rs` with `AudioSystem` wrapping `rodio` and expose playback APIs.
 
 ## Phase 6 – State/scene system
-- [ ] Define `State` trait (`on_enter`, `on_exit`, `update`, `draw`) and `StateMachine` management.
-- [ ] Integrate state management into the engine loop or game wrapper.
-- [ ] Update examples to demonstrate menu/gameplay state transitions.
+- [x] Define `State` trait (`on_enter`, `on_exit`, `update`, `draw`) and `StateMachine` management.
+- [x] Integrate state management into the engine loop or game wrapper.
+- [x] Update examples to demonstrate menu/gameplay state transitions.
 
-## Phase 7 – Optional ECS
+## Phase 7 – Input mapping and beyond
+- [x] Add high-level input mapping layer (`InputMap`, `ActionId`, `AxisBinding`) on top of `InputState`.
+- [x] Update examples (`basic_game`, `state_demo`) to use actions/axes instead of raw keycodes for core movement.
+- [ ] Extend input mapping to support configurable/rebindable control profiles (data-driven).
+
+## Phase 8 – Optional ECS
 - [ ] Evaluate integrating an ECS (e.g., `hecs`) for component-based entities.
 - [ ] Define core components (transform, sprite, velocity) and systems (movement, rendering, input-driven actions).
 - [ ] Provide a sample showing ECS-driven gameplay once earlier phases stabilize.

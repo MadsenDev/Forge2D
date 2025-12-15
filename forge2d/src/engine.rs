@@ -83,7 +83,9 @@ impl Engine {
         let mut pending_error: Option<anyhow::Error> = None;
 
         event_loop.run_return(|event, _, control_flow| {
-            *control_flow = ControlFlow::Poll;
+            // Use Wait by default for better CPU efficiency
+            // Switch to Poll only when actively rendering/updating
+            *control_flow = ControlFlow::Wait;
 
             match event {
                 Event::NewEvents(_) => {
@@ -127,6 +129,8 @@ impl Engine {
                     }
 
                     ctx.window.request_redraw();
+                    // Request immediate processing for next frame
+                    *control_flow = ControlFlow::Poll;
                 }
                 Event::RedrawRequested(_) => {
                     if let Err(err) = game.draw(&mut ctx) {
@@ -164,6 +168,8 @@ pub struct EngineContext {
     window: winit::window::Window,
     delta_time: Duration,
     elapsed_time: Duration,
+    fixed_delta_time: Duration,
+    fixed_time_accumulator: Duration,
     exit_requested: bool,
     input: InputState,
     renderer: Renderer,
@@ -181,6 +187,8 @@ impl EngineContext {
             window,
             delta_time: Duration::ZERO,
             elapsed_time: Duration::ZERO,
+            fixed_delta_time: Duration::from_secs_f64(1.0 / 60.0), // 60 FPS fixed timestep
+            fixed_time_accumulator: Duration::ZERO,
             exit_requested: false,
             input: InputState::new(),
             renderer,
@@ -196,6 +204,8 @@ impl EngineContext {
     fn update_time(&mut self, delta: Duration) {
         self.delta_time = delta;
         self.elapsed_time += delta;
+        // Accumulate time for fixed timestep
+        self.fixed_time_accumulator += delta;
     }
 
     fn handle_window_event(&mut self, event: &WindowEvent) {
@@ -223,6 +233,48 @@ impl EngineContext {
     /// Total time elapsed since the engine started running.
     pub fn elapsed_time(&self) -> Duration {
         self.elapsed_time
+    }
+
+    /// Fixed timestep duration (typically 1/60 second for 60 FPS).
+    pub fn fixed_delta_time(&self) -> Duration {
+        self.fixed_delta_time
+    }
+
+    /// Check if a fixed timestep update should run and consume accumulated time.
+    ///
+    /// Returns `true` if enough time has accumulated for a fixed update.
+    /// Call this in a loop until it returns `false` to handle multiple fixed updates per frame.
+    ///
+    /// Example:
+    /// ```rust,no_run
+    /// # use forge2d::EngineContext;
+    /// # fn example(mut ctx: &mut EngineContext) {
+    /// while ctx.should_run_fixed_update() {
+    ///     // Run physics, collision, etc. with fixed timestep
+    ///     let fixed_dt = ctx.fixed_delta_time();
+    ///     // physics_system.update(fixed_dt);
+    /// }
+    /// # }
+    /// ```
+    pub fn should_run_fixed_update(&mut self) -> bool {
+        if self.fixed_time_accumulator >= self.fixed_delta_time {
+            self.fixed_time_accumulator -= self.fixed_delta_time;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the interpolation factor for rendering between fixed timestep updates.
+    ///
+    /// Returns a value between 0.0 and 1.0 indicating how far through the current
+    /// fixed timestep interval we are. Useful for smooth interpolation in rendering.
+    pub fn fixed_update_alpha(&self) -> f32 {
+        if self.fixed_delta_time.as_secs_f32() > 0.0 {
+            (self.fixed_time_accumulator.as_secs_f32() / self.fixed_delta_time.as_secs_f32()).min(1.0)
+        } else {
+            0.0
+        }
     }
 
     /// Access the underlying winit window.
@@ -268,6 +320,46 @@ impl EngineContext {
             .load_texture_from_bytes(&mut self.renderer, key, bytes)
     }
 
+    /// Load a font from bytes using the asset manager (convenience method).
+    ///
+    /// Fonts are cached by the provided key. Loading the same key again
+    /// returns the cached `FontHandle` without re-loading the font data.
+    pub fn load_font_from_bytes(
+        &mut self,
+        key: &str,
+        bytes: &[u8],
+    ) -> Result<crate::render::FontHandle> {
+        self.assets
+            .load_font_from_bytes(&mut self.renderer, key, bytes)
+    }
+
+    /// Get a cached font handle by key, if it exists.
+    pub fn get_font(&self, key: &str) -> Option<crate::render::FontHandle> {
+        self.assets.get_font(key)
+    }
+
+    /// Load a built-in engine font via the asset system.
+    ///
+    /// This uses the `BuiltinFont` enum and `AssetManager` under the hood.
+    /// Until you configure actual font files in `forge2d::fonts`, this will
+    /// return an error which you can gracefully ignore.
+    pub fn builtin_font(
+        &mut self,
+        which: crate::fonts::BuiltinFont,
+    ) -> Result<crate::render::FontHandle> {
+        which.load(&mut self.assets, &mut self.renderer)
+    }
+
+    /// Get mouse position in world coordinates using the current camera.
+    ///
+    /// This converts screen-space mouse coordinates to world-space coordinates
+    /// using the provided camera's view projection.
+    pub fn mouse_world(&self, camera: &crate::math::Camera2D) -> crate::math::Vec2 {
+        let mouse_screen = self.input.mouse_position_vec2();
+        let (screen_w, screen_h) = self.renderer.surface_size();
+        camera.screen_to_world(mouse_screen, screen_w, screen_h)
+    }
+
     /// Access the audio system for playing sounds and music.
     pub fn audio(&mut self) -> &mut AudioSystem {
         &mut self.audio
@@ -286,4 +378,39 @@ pub trait Game {
 
     /// Draw the current frame. Called after update when a redraw is requested.
     fn draw(&mut self, ctx: &mut EngineContext) -> Result<()>;
+}
+
+/// Adapter to use StateMachine as a Game.
+/// This allows StateMachine to be used directly with Engine::run().
+impl Game for crate::state::StateMachine {
+    fn init(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        // Call on_enter for the initial state (if any)
+        self.init_top_state(ctx)?;
+        // Apply any initial state transitions
+        self.apply_transitions(ctx)?;
+        Ok(())
+    }
+
+    fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        // Apply pending state transitions first
+        self.apply_transitions(ctx)?;
+
+        // Update the top state (if any)
+        // This method handles borrow checker issues internally
+        self.update_top(ctx)?;
+
+        Ok(())
+    }
+
+    fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        let renderer = ctx.renderer();
+        let mut frame = renderer.begin_frame()?;
+        
+        // Draw all states from bottom to top (oldest to newest)
+        // This allows background states to be visible behind foreground states
+        self.draw_all(renderer, &mut frame)?;
+        
+        renderer.end_frame(frame)?;
+        Ok(())
+    }
 }

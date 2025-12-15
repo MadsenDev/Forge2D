@@ -213,19 +213,36 @@ Engine::new()
 - `forge2d/`: The engine crate containing the public API
 - `examples/basic_game/`: A complete example showing sprite rendering
 
-## Current Features (Phase 4)
+## Documentation
+
+📚 **Comprehensive documentation is available in the [`docs/`](docs/) directory:**
+
+- [Getting Started](docs/getting-started.md) - Quick start guide
+- [Engine & Game Loop](docs/engine.md) - Engine configuration
+- [Input System](docs/input.md) - Keyboard and mouse input
+- [Rendering](docs/rendering.md) - Sprites, textures, cameras, text
+- [Math Utilities](docs/math.md) - Vec2, Transform2D, Camera2D
+- [Asset Management](docs/assets.md) - Loading and caching assets
+- [Audio System](docs/audio.md) - Sound effects and music
+- [Fixed Timestep](docs/fixed-timestep.md) - Deterministic updates
+- [API Reference](docs/api-reference.md) - Complete API docs
+- [Examples](docs/examples.md) - Code examples and patterns
+
+## Current Features
 
 ✅ Window creation and event loop  
 ✅ Input system (keyboard & mouse)  
 ✅ 2D rendering with wgpu  
-✅ Sprite rendering with textures  
+✅ Sprite rendering with textures (batched)  
+✅ Text rendering with TTF/OTF fonts  
 ✅ Camera system  
 ✅ Math utilities (Vec2, Transform2D)  
+✅ Asset manager for texture caching  
+✅ Audio system  
+✅ Fixed timestep support  
 
-## Coming Soon (Phase 5+)
+## Coming Soon
 
-- Asset manager for texture caching
-- Audio system
 - State/scene management
 - Optional ECS support
 

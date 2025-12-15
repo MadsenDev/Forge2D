@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use forge2d::{
-    Camera2D, Engine, EngineContext, Game, MouseButton, Sprite, Vec2, VirtualKeyCode,
+    ActionId, AxisBinding, Button, BuiltinFont, Camera2D, Engine, EngineContext, FontHandle, Game,
+    InputMap, MouseButton, Sprite, Vec2, VirtualKeyCode,
 };
 
 // Embedded texture: neutral white square (32x32). We tint per-sprite.
@@ -54,10 +55,56 @@ struct BasicGame {
     // Game state
     score: u32,
     last_collectible_spawn: Duration,
+    
+    // Text rendering
+    font: Option<FontHandle>,
+    score_text: String,
+
+    // Input mapping
+    input_map: InputMap,
+    axis_horizontal: ActionId,
+    axis_vertical: ActionId,
 }
 
 impl Game for BasicGame {
     fn init(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        // Configure high-level input mapping (actions/axes).
+        //
+        // Movement is bound to WASD + arrow keys via two axes:
+        // - move_horizontal: A/Left = -1, D/Right = +1
+        // - move_vertical:   W/Up = -1 (up), S/Down = +1 (down)
+        self.input_map = InputMap::new();
+        self.axis_horizontal = ActionId::new("move_horizontal");
+        self.axis_vertical = ActionId::new("move_vertical");
+
+        self.input_map.set_axis(
+            self.axis_horizontal.clone(),
+            AxisBinding::new(
+                vec![
+                    Button::Key(VirtualKeyCode::A),
+                    Button::Key(VirtualKeyCode::Left),
+                ],
+                vec![
+                    Button::Key(VirtualKeyCode::D),
+                    Button::Key(VirtualKeyCode::Right),
+                ],
+            ),
+        );
+
+        self.input_map.set_axis(
+            self.axis_vertical.clone(),
+            AxisBinding::new(
+                vec![
+                    Button::Key(VirtualKeyCode::W),
+                    Button::Key(VirtualKeyCode::Up),
+                ],
+                vec![
+                    Button::Key(VirtualKeyCode::S),
+                    Button::Key(VirtualKeyCode::Down),
+                ],
+            ),
+        );
+
         // Load textures using AssetManager (demonstrates caching)
         let red_texture = ctx.load_texture_from_bytes("red_square", RED_PNG)?;
         let blue_texture = ctx.load_texture_from_bytes("blue_square", BLUE_PNG)?;
@@ -67,66 +114,76 @@ impl Game for BasicGame {
         let _cached_red = ctx.load_texture_from_bytes("red_square", RED_PNG)?;
         assert_eq!(red_texture, _cached_red); // Same handle = cached!
         
-        // Initialize player (blue square with blue tint)
-        let mut player = Sprite::new(blue_texture);
-        player.transform.scale = Vec2::new(24.0, 24.0);
-        player.tint = [0.3, 0.5, 1.0, 1.0]; // Blue tint
-        let (screen_w, screen_h) = ctx.renderer().surface_size();
-        player.transform.position = Vec2::new(screen_w as f32 * 0.5, screen_h as f32 * 0.5);
-        let player_start = player.transform.position;
+        // World bounds - define the playable area
+        self.world_bounds = Vec2::new(1400.0, 900.0);
         
-        // Initialize camera so that the player is centered on screen (no zoom compensation)
+        // Texture is 32x32 pixels
+        const TEX_SIZE: f32 = 32.0;
+        let tex_vec = Vec2::new(TEX_SIZE, TEX_SIZE);
+        
+        // Initialize player at a known world position (center-based transform)
+        // Transform.position represents the CENTER of the sprite (vertices are centered)
+        // Transform.scale is a multiplier: 1.0 = native texture size (32x32)
+        let mut player = Sprite::new(blue_texture);
+        player.set_size_px(Vec2::new(32.0, 32.0), tex_vec); // 32px = scale 1.0
+        player.tint = [0.3, 0.5, 1.0, 1.0]; // Blue tint
+        player.transform.position = Vec2::new(200.0, 200.0); // World coordinates
+        
+        // Initialize camera to center on player
+        let (screen_w, screen_h) = ctx.renderer().surface_size();
         self.camera = Camera2D::new(Vec2::new(
             player.transform.position.x - (screen_w as f32 * 0.5),
             player.transform.position.y - (screen_h as f32 * 0.5),
         ));
         self.player = Some(player);
 
-        // World bounds (for reference and clamping)
-        self.world_bounds = Vec2::new(1000.0, 700.0);
-
-        // Background tiles (grid around player start so you see reference immediately)
+        // Background tiles (grid covering world bounds, centered on world origin)
         self.background_tiles.clear();
-        let tile_scale = Vec2::new(96.0, 96.0);
-        for ix in -5..=5 {
-            for iy in -4..=4 {
+        let tile_size_px = Vec2::new(128.0, 128.0); // 128x128 pixel tiles
+        let tile_half = tile_size_px * 0.5;
+        // Cover world bounds with tiles
+        for ix in 0..=(self.world_bounds.x / tile_size_px.x) as i32 {
+            for iy in 0..=(self.world_bounds.y / tile_size_px.y) as i32 {
                 let mut tile = Sprite::new(red_texture);
-                tile.transform.scale = tile_scale;
+                tile.set_size_px(tile_size_px, tex_vec); // 128px = scale 4.0
+                // Position is center, so offset by half tile size
                 tile.transform.position = Vec2::new(
-                    player_start.x + ix as f32 * tile_scale.x,
-                    player_start.y + iy as f32 * tile_scale.y,
+                    ix as f32 * tile_size_px.x + tile_half.x,
+                    iy as f32 * tile_size_px.y + tile_half.y,
                 );
                 tile.tint = [0.2, 0.22, 0.28, 1.0]; // darker grid
                 self.background_tiles.push(tile);
             }
         }
 
-        // World boundary walls
+        // World boundary walls (position is CENTER, so account for half-size)
         self.walls.clear();
-        let wall_thickness = 32.0;
-        let mut make_wall = |x: f32, y: f32, w: f32, h: f32| {
+        let wall_thickness_px = 32.0;
+        let mut make_wall = |x: f32, y: f32, w_px: f32, h_px: f32| {
             let mut wall = Sprite::new(red_texture);
-            wall.transform.scale = Vec2::new(w, h);
-            wall.transform.position = Vec2::new(x, y);
+            wall.set_size_px(Vec2::new(w_px, h_px), tex_vec);
+            // Position is center, so offset by half size
+            wall.transform.position = Vec2::new(x + w_px * 0.5, y + h_px * 0.5);
             wall.tint = [0.2, 0.2, 0.2, 1.0];
             self.walls.push(wall);
         };
-        // Top, bottom, left, right walls
-        make_wall(0.0, 0.0, self.world_bounds.x, wall_thickness);
-        make_wall(0.0, self.world_bounds.y - wall_thickness, self.world_bounds.x, wall_thickness);
-        make_wall(0.0, 0.0, wall_thickness, self.world_bounds.y);
-        make_wall(self.world_bounds.x - wall_thickness, 0.0, wall_thickness, self.world_bounds.y);
-        // Moderate zoom so entities remain visible
-        self.camera.zoom = 0.35;
+        // Top, bottom, left, right walls (inside world bounds)
+        make_wall(0.0, 0.0, self.world_bounds.x, wall_thickness_px); // Top
+        make_wall(0.0, self.world_bounds.y - wall_thickness_px, self.world_bounds.x, wall_thickness_px); // Bottom
+        make_wall(0.0, 0.0, wall_thickness_px, self.world_bounds.y); // Left
+        make_wall(self.world_bounds.x - wall_thickness_px, 0.0, wall_thickness_px, self.world_bounds.y); // Right
+        // Zoom adjusted for correct sprite sizes (1.0 = native size)
+        self.camera.zoom = 1.0;
         
-        // Spawn initial collectibles (green squares)
+        // Spawn initial collectibles (green squares) in world coordinates
         let collectible_texture = green_texture;
         for i in 0..5 {
             let mut sprite = Sprite::new(collectible_texture);
-            sprite.transform.scale = Vec2::new(48.0, 48.0);
+            sprite.set_size_px(Vec2::new(48.0, 48.0), tex_vec); // 48px = scale 1.5
+            // Position in world space, not screen space
             sprite.transform.position = Vec2::new(
-                screen_w as f32 * 0.3 + i as f32 * 80.0,
-                screen_h as f32 * 0.4 + i as f32 * 50.0,
+                300.0 + i as f32 * 150.0,
+                250.0 + i as f32 * 100.0,
             );
             sprite.tint = [0.3, 1.0, 0.3, 1.0]; // Green tint
             
@@ -137,14 +194,15 @@ impl Game for BasicGame {
             });
         }
         
-        // Spawn initial enemies (red squares)
+        // Spawn initial enemies (red squares) in world coordinates
         let enemy_texture = red_texture;
         for i in 0..3 {
             let mut sprite = Sprite::new(enemy_texture);
-            sprite.transform.scale = Vec2::new(56.0, 56.0);
+            sprite.set_size_px(Vec2::new(56.0, 56.0), tex_vec); // 56px = scale 1.75
+            // Position in world space
             sprite.transform.position = Vec2::new(
-                screen_w as f32 * 0.7 + i as f32 * 90.0,
-                screen_h as f32 * 0.6 + i as f32 * 70.0,
+                800.0 + i as f32 * 200.0,
+                400.0 + i as f32 * 150.0,
             );
             sprite.tint = [1.0, 0.5, 0.5, 1.0]; // Slightly tinted
             
@@ -168,6 +226,12 @@ impl Game for BasicGame {
         println!("ESC: Exit");
         println!("Collect green squares for points!");
         
+        // Try to load a built-in font for text rendering.
+        // Until you configure `BuiltinFont::Ui` in `forge2d::fonts`, this will
+        // likely return an error and text will be skipped.
+        self.font = ctx.builtin_font(BuiltinFont::Ui).ok();
+        self.score_text = format!("Score: {}", self.score);
+        
         Ok(())
     }
 
@@ -178,45 +242,46 @@ impl Game for BasicGame {
         if ctx.input().is_key_pressed(VirtualKeyCode::Escape) {
             ctx.request_exit();
         }
-        
-        // Player movement with WASD or Arrow Keys
-        let mut move_dir = Vec2::ZERO;
-        
-        if ctx.input().is_key_down(VirtualKeyCode::W) || ctx.input().is_key_down(VirtualKeyCode::Up) {
-            move_dir.y -= 1.0;
-        }
-        if ctx.input().is_key_down(VirtualKeyCode::S) || ctx.input().is_key_down(VirtualKeyCode::Down) {
-            move_dir.y += 1.0;
-        }
-        if ctx.input().is_key_down(VirtualKeyCode::A) || ctx.input().is_key_down(VirtualKeyCode::Left) {
-            move_dir.x -= 1.0;
-        }
-        if ctx.input().is_key_down(VirtualKeyCode::D) || ctx.input().is_key_down(VirtualKeyCode::Right) {
-            move_dir.x += 1.0;
-        }
-        
+
+        // Player movement using high-level input axes (WASD / arrow keys).
+        let input = ctx.input();
+        let move_dir = Vec2::new(
+            self.input_map.axis(input, &self.axis_horizontal),
+            self.input_map.axis(input, &self.axis_vertical),
+        );
+
         // Normalize movement direction for consistent speed
         if let Some(player) = self.player.as_mut() {
             if move_dir.length_squared() > 0.0 {
-                move_dir = move_dir.normalized();
-                player.transform.position += move_dir * self.player_speed * dt;
+                let dir = move_dir.normalized();
+                player.transform.position += dir * self.player_speed * dt;
             }
-            // Clamp player to world bounds (minus sprite size)
-            let size = player.transform.scale;
-            player.transform.position.x = player.transform.position.x.clamp(0.0, self.world_bounds.x - size.x);
-            player.transform.position.y = player.transform.position.y.clamp(0.0, self.world_bounds.y - size.y);
+            // Clamp player to world bounds (position is CENTER, so account for half-size)
+            // Scale is a multiplier, so actual size = scale * texture_size (32px)
+            const PLAYER_SIZE_PX: f32 = 32.0;
+            let half_size = PLAYER_SIZE_PX * 0.5;
+            player.transform.position.x = player.transform.position.x.clamp(
+                half_size,
+                self.world_bounds.x - half_size,
+            );
+            player.transform.position.y = player.transform.position.y.clamp(
+                half_size,
+                self.world_bounds.y - half_size,
+            );
         }
         
-        // Mouse click to spawn collectible
+        // Mouse click to spawn collectible at world position (camera-aware)
         if ctx.input().is_mouse_pressed(MouseButton::Left) {
-            let mouse_pos = ctx.input().mouse_position_vec2();
-            self.click_positions.push(mouse_pos);
+            // Convert screen mouse position to world coordinates using camera
+            let mouse_world = ctx.mouse_world(&self.camera);
+            println!("CLICK world = {:?}", mouse_world);
+            self.click_positions.push(mouse_world);
             
-            // Spawn a new collectible at mouse position
+            // Spawn a new collectible at world position
             if let Some(green_texture) = ctx.assets().get_texture("green_square") {
                 let mut sprite = Sprite::new(green_texture);
-                sprite.transform.scale = Vec2::new(32.0, 32.0);
-                sprite.transform.position = mouse_pos;
+                sprite.set_size_px(Vec2::new(32.0, 32.0), Vec2::new(32.0, 32.0)); // 32px = scale 1.0
+                sprite.transform.position = mouse_world; // World coordinates
                 sprite.tint = [0.3, 1.0, 0.3, 1.0]; // Green tint
                 
                 self.collectibles.push(Collectible {
@@ -244,22 +309,26 @@ impl Game for BasicGame {
             collectible.sprite.transform.rotation = collectible.rotation;
         }
         
-        // Check collisions: player vs collectibles
+        // Check collisions: player vs collectibles (compute radii from actual sprite sizes)
+        // Texture is 32x32, so size_px = scale * 32.0
+        const TEX_PX: f32 = 32.0;
+        
         let Some(player) = &self.player else {
             return Ok(());
         };
         let player_pos = player.transform.position;
-        let player_size = player.transform.scale;
-        let player_radius = player_size.length() * 0.5;
+        let player_size_px = player.transform.scale * TEX_PX;
+        let player_radius = player_size_px.length() * 0.5;
         
         self.collectibles.retain_mut(|collectible| {
             let collectible_pos = collectible.sprite.transform.position;
-            let collectible_size = collectible.sprite.transform.scale;
-            let collectible_radius = collectible_size.length() * 0.5;
+            let collectible_size_px = collectible.sprite.transform.scale * TEX_PX;
+            let collectible_radius = collectible_size_px.length() * 0.5;
             
             let distance = player_pos.distance(collectible_pos);
             if distance < player_radius + collectible_radius {
                 self.score += 10;
+                self.score_text = format!("Score: {}", self.score);
                 println!("Score: {} (+10)", self.score);
                 false // Remove collectible
             } else {
@@ -267,36 +336,40 @@ impl Game for BasicGame {
             }
         });
         
-        // Update enemies (bouncing movement)
+        // Update enemies (bouncing movement) - position is CENTER
         let bounds = self.world_bounds;
+        const ENEMY_SIZE_PX: f32 = 56.0;
+        let enemy_half_size = ENEMY_SIZE_PX * 0.5;
         
         for (enemy, velocity) in self.enemies.iter_mut().zip(self.enemy_velocities.iter_mut()) {
             enemy.transform.position += *velocity * dt;
             
-            let size = enemy.transform.scale;
             let pos = &mut enemy.transform.position;
             
-            // Bounce off walls
-            if pos.x < 0.0 || pos.x + size.x > bounds.x {
+            // Bounce off walls (accounting for center-based position)
+            if pos.x < enemy_half_size || pos.x > bounds.x - enemy_half_size {
                 velocity.x = -velocity.x;
-                pos.x = pos.x.max(0.0).min(bounds.x - size.x);
+                pos.x = pos.x.max(enemy_half_size).min(bounds.x - enemy_half_size);
             }
-            if pos.y < 0.0 || pos.y + size.y > bounds.y {
+            if pos.y < enemy_half_size || pos.y > bounds.y - enemy_half_size {
                 velocity.y = -velocity.y;
-                pos.y = pos.y.max(0.0).min(bounds.y - size.y);
+                pos.y = pos.y.max(enemy_half_size).min(bounds.y - enemy_half_size);
             }
         }
         
-        // Spawn new collectibles periodically
+        // Spawn new collectibles periodically in world coordinates
         if ctx.elapsed_time() - self.last_collectible_spawn > Duration::from_secs(3) {
             self.last_collectible_spawn = ctx.elapsed_time();
             
             if let Some(green_texture) = ctx.assets().get_texture("green_square") {
                 let mut sprite = Sprite::new(green_texture);
-                sprite.transform.scale = Vec2::new(32.0, 32.0);
+                const COLLECTIBLE_SIZE_PX: f32 = 48.0;
+                sprite.set_size_px(Vec2::new(COLLECTIBLE_SIZE_PX, COLLECTIBLE_SIZE_PX), Vec2::new(32.0, 32.0));
+                // Spawn in world space, avoiding edges (using actual pixel size)
+                let half_size = COLLECTIBLE_SIZE_PX * 0.5;
                 sprite.transform.position = Vec2::new(
-                    (self.score as f32 * 50.0) % bounds.x,
-                    (self.score as f32 * 70.0) % bounds.y,
+                    half_size + (self.score as f32 * 50.0) % (bounds.x - COLLECTIBLE_SIZE_PX),
+                    half_size + (self.score as f32 * 70.0) % (bounds.y - COLLECTIBLE_SIZE_PX),
                 );
                 sprite.tint = [0.3, 1.0, 0.3, 1.0]; // Green tint
                 
@@ -343,13 +416,59 @@ impl Game for BasicGame {
             renderer.draw_sprite(&mut frame, player, &self.camera)?;
         }
         
-        // Draw click indicators (small white dots)
-        // Note: Could be improved with particle effects or sprites
-        let _click_count = self.click_positions.len();
-        
-        // Clean up old click positions (keep last 10)
-        if self.click_positions.len() > 10 {
-            self.click_positions.remove(0);
+        // Draw text (if font is loaded)
+        if let Some(font) = self.font {
+            // Update score text if needed
+            let current_score_text = format!("Score: {}", self.score);
+            if current_score_text != self.score_text {
+                self.score_text = current_score_text.clone();
+                // Re-rasterize if text changed
+                if let Err(e) = renderer.rasterize_text_glyphs(&self.score_text, font, 24.0) {
+                    eprintln!("Failed to rasterize text: {}", e);
+                }
+            }
+            
+            // Draw score in top-left corner (screen space, but we'll use world coords)
+            // Position relative to camera for screen-space effect
+            let (screen_w, screen_h) = renderer.surface_size();
+            let text_pos = Vec2::new(
+                self.camera.position.x - (screen_w as f32 * 0.5) + 20.0,
+                self.camera.position.y + (screen_h as f32 * 0.5) - 40.0,
+            );
+            
+            if let Err(e) = renderer.draw_text(
+                &mut frame,
+                &self.score_text,
+                font,
+                24.0,
+                text_pos,
+                [1.0, 1.0, 1.0, 1.0], // White
+                &self.camera,
+            ) {
+                eprintln!("Failed to draw text: {}", e);
+            }
+            
+            // Draw instructions (bottom-left)
+            let instructions = "WASD: Move | Click: Spawn | ESC: Exit";
+            let instructions_pos = Vec2::new(
+                self.camera.position.x - (screen_w as f32 * 0.5) + 20.0,
+                self.camera.position.y - (screen_h as f32 * 0.5) + 20.0,
+            );
+            
+            // Rasterize instructions text
+            if let Err(e) = renderer.rasterize_text_glyphs(instructions, font, 16.0) {
+                eprintln!("Failed to rasterize instructions: {}", e);
+            } else if let Err(e) = renderer.draw_text(
+                &mut frame,
+                instructions,
+                font,
+                16.0,
+                instructions_pos,
+                [0.8, 0.8, 0.8, 1.0], // Light gray
+                &self.camera,
+            ) {
+                eprintln!("Failed to draw instructions: {}", e);
+            }
         }
         
         renderer.end_frame(frame)?;
@@ -375,5 +494,10 @@ fn main() -> Result<()> {
             click_positions: Vec::new(),
             score: 0,
             last_collectible_spawn: Duration::ZERO,
+            font: None,
+            score_text: String::new(),
+            input_map: InputMap::new(),
+            axis_horizontal: ActionId::new("move_horizontal"),
+            axis_vertical: ActionId::new("move_vertical"),
         })
 }

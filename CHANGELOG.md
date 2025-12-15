@@ -4,7 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 ### Added
+- **Asset system v2 (textures + fonts)** - Extended `AssetManager` to manage fonts in addition to textures
+  - Fonts cached by string key and loaded via renderer font API
+  - `AssetManager::load_font_from_bytes()` and `AssetManager::get_font()` for font management
+  - `EngineContext::load_font_from_bytes()` and `EngineContext::get_font()` convenience methods
+  - Updated docs (`assets.md`, `rendering.md`) to show font loading via the asset system
+ - **World & EntityId** - Added a minimal world/entity layer for centralized entity/component storage
+   - `World` manages `EntityId`s and typed component storage keyed by entity
+   - APIs for `spawn`, `despawn`, `insert`, `remove`, `get`, `get_mut`, and `query::<T>()`
+   - Exported from crate root as `forge2d::{World, EntityId}`
+   - Documented in `docs/world.md` with usage patterns
+- **Input mapping layer** - Added high-level `InputMap` on top of `InputState`
+  - `ActionId` and `Button` types to describe logical actions and physical inputs
+  - `AxisBinding` for simple one-dimensional axes (e.g. horizontal/vertical movement)
+  - `InputMap` for binding keys/mouse buttons to actions and axes
+  - Updated `basic_game` and `state_demo` to use axes for movement instead of raw keycodes
+- **State/scene management system** - Added `State` trait and `StateMachine` for managing game states
+  - `State` trait with `on_enter()`, `on_exit()`, `update()`, and `draw()` methods
+  - `StateMachine` manages a stack of states with push/pop/replace operations
+  - States can transition to other states during update
+  - State transitions are deferred until after the current update/draw cycle
+  - `StateMachine` implements `Game`, so it can be used directly with `Engine::run()`
+  - Added `state_demo` example demonstrating menu -> gameplay -> pause transitions
+- **Text rendering system** - Added support for rendering text using TTF/OTF fonts
+  - `Renderer::load_font_from_bytes()` to load fonts
+  - `Renderer::rasterize_text_glyphs()` to pre-rasterize glyphs for a text string
+  - `Renderer::draw_text()` to render text at world positions
+  - Glyph caching for efficient text rendering
+  - Uses `ab_glyph` for font loading and rasterization
+  - Updated `basic_game` example to demonstrate text rendering (score display and instructions)
+- **Performance: Batched sprite rendering** - All sprites are now drawn in a single render pass per frame instead of one pass per sprite, significantly improving performance
+  - Sprites are queued during `draw_sprite()` calls and flushed together in `end_frame()`
+  - Reduces GPU overhead and improves frame times, especially with many sprites
 - Added `AssetManager` for caching textures and other assets, preventing duplicate loads.
+- Added fixed timestep support: `EngineContext::should_run_fixed_update()` and `fixed_delta_time()` for deterministic physics/collision.
+- Added `EngineContext::mouse_world()` helper to convert screen mouse coordinates to world coordinates using the camera.
+- Added `EngineContext::fixed_update_alpha()` for interpolation factor between fixed timestep updates.
+### Fixed
+- Fixed critical mouse button indexing bug: `MouseButton::Other(0)` no longer collides with `Left` button (reserved indices 0-2 for L/R/M).
+- Optimized event loop: switched from `ControlFlow::Poll` to `ControlFlow::Wait` by default for better CPU efficiency.
 - Added `AudioSystem` wrapping `rodio` for sound effects and background music playback.
 - Added convenience methods `EngineContext::load_texture()` and `EngineContext::load_texture_from_bytes()`.
 - Added `AudioSystem::is_available()` to check if audio is working.
@@ -13,11 +51,33 @@ All notable changes to this project will be documented in this file.
   - Player movement with WASD/Arrow keys
   - Multiple sprites (player, enemies, collectibles)
   - Camera following player smoothly
-  - Mouse click interaction (spawn collectibles)
+  - Mouse click interaction (spawn collectibles at world coordinates)
   - Collision detection (player vs collectibles)
   - Sprite rotation animations
   - Asset caching demonstration
   - Score system
+- Fixed example game coordinate conventions:
+  - All positions now use world coordinates consistently
+  - Transform.position correctly treated as CENTER (matching renderer's centered vertices)
+  - Mouse spawning now uses `ctx.mouse_world(camera)` for camera-aware placement
+  - Clamping and collision now account for center-based positions
+  - World bounds and background tiles use consistent coordinate system
+- Fixed scale convention mismatch:
+  - Added `Sprite::set_size_px()` helper method to set sprite size in pixels
+  - `Transform2D.scale` is a multiplier (1.0 = native texture size), not pixels
+  - Updated example game to use correct scale values (was 32x multiplier, now 1.0)
+  - Fixed wall placement to be inside world bounds instead of outside
+  - Adjusted camera zoom to 1.0 for correct visual scale
+- Fixed collision detection bug:
+  - Collision radii now computed from actual sprite sizes (scale * texture_size) instead of hardcoded values
+  - Fixes issue where click-spawned 32×32 collectibles were immediately removed due to 48×48 collision radius
+  - Added debug print for click positions
+  - Added visual click indicators (small white dots) to show where clicks occurred
+- Fixed critical rendering bug where sprites were overwriting each other:
+  - Each sprite now uses a unique uniform buffer offset via dynamic offsets
+  - Bind groups are cached per texture to avoid recreation
+  - All render passes use LoadOp::Load to preserve previous draws
+  - This fixes the issue where only the last-drawn sprite was visible
 ### Added (previous)
 - Initialized the Forge2D workspace with the core `Engine` API and game loop skeleton.
 - Added a `basic_game` example demonstrating window creation and a simple timed exit.

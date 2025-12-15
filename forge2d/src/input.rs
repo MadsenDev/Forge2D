@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
 
 /// Tracks keyboard and mouse state across frames.
@@ -140,6 +142,141 @@ impl InputState {
     pub fn mouse_position_vec2(&self) -> crate::math::Vec2 {
         crate::math::Vec2::new(self.mouse_x, self.mouse_y)
     }
+
+    /// Current mouse cursor position in screen pixels (surface coordinates).
+    pub fn mouse_screen_pixels(&self) -> (f32, f32) {
+        // For now, same as logical pixels. Could be enhanced to track DPI scaling separately.
+        (self.mouse_x, self.mouse_y)
+    }
+}
+
+/// A logical input action (e.g. "move_left", "jump").
+///
+/// This is a lightweight, data-driven layer on top of `InputState`.
+/// Game code binds one or more physical inputs (keys/mouse buttons)
+/// to each action and then queries the action state instead of
+/// referencing key codes directly.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ActionId(pub String);
+
+impl ActionId {
+    /// Create a new action identifier from any string-like value.
+    pub fn new(name: impl Into<String>) -> Self {
+        ActionId(name.into())
+    }
+}
+
+/// A physical button that can be bound to an action or axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Button {
+    Key(VirtualKeyCode),
+    Mouse(MouseButton),
+}
+
+impl Button {
+    fn is_down(self, input: &InputState) -> bool {
+        match self {
+            Button::Key(k) => input.is_key_down(k),
+            Button::Mouse(b) => input.is_mouse_down(b),
+        }
+    }
+
+    fn is_pressed(self, input: &InputState) -> bool {
+        match self {
+            Button::Key(k) => input.is_key_pressed(k),
+            Button::Mouse(b) => input.is_mouse_pressed(b),
+        }
+    }
+}
+
+/// A one-dimensional axis binding (e.g. -1..1 horizontal movement).
+#[derive(Clone, Debug)]
+pub struct AxisBinding {
+    /// Buttons contributing negative direction (e.g. A, Left).
+    pub negative: Vec<Button>,
+    /// Buttons contributing positive direction (e.g. D, Right).
+    pub positive: Vec<Button>,
+}
+
+impl AxisBinding {
+    /// Create a new axis binding from negative and positive button sets.
+    pub fn new(negative: Vec<Button>, positive: Vec<Button>) -> Self {
+        Self { negative, positive }
+    }
+}
+
+/// High-level input mapping from actions/axes to physical inputs.
+///
+/// This is intentionally simple and game-agnostic. Games are free to
+/// store an `InputMap` in their own state, configure bindings in
+/// `init()`, and then query actions/axes during `update()`.
+#[derive(Clone, Debug)]
+pub struct InputMap {
+    actions: HashMap<ActionId, Vec<Button>>,
+    axes: HashMap<ActionId, AxisBinding>,
+}
+
+impl InputMap {
+    /// Create an empty input map.
+    pub fn new() -> Self {
+        Self {
+            actions: HashMap::new(),
+            axes: HashMap::new(),
+        }
+    }
+
+    /// Bind a key to an action.
+    pub fn bind_key(&mut self, action: ActionId, key: VirtualKeyCode) {
+        self.actions.entry(action).or_default().push(Button::Key(key));
+    }
+
+    /// Bind a mouse button to an action.
+    pub fn bind_mouse_button(&mut self, action: ActionId, button: MouseButton) {
+        self.actions
+            .entry(action)
+            .or_default()
+            .push(Button::Mouse(button));
+    }
+
+    /// Define or replace an axis binding.
+    pub fn set_axis(&mut self, axis: ActionId, binding: AxisBinding) {
+        self.axes.insert(axis, binding);
+    }
+
+    /// Check if an action is currently held down.
+    pub fn action_down(&self, input: &InputState, action: &ActionId) -> bool {
+        self.actions
+            .get(action)
+            .map(|buttons| buttons.iter().any(|&b| b.is_down(input)))
+            .unwrap_or(false)
+    }
+
+    /// Check if an action was pressed this frame.
+    pub fn action_pressed(&self, input: &InputState, action: &ActionId) -> bool {
+        self.actions
+            .get(action)
+            .map(|buttons| buttons.iter().any(|&b| b.is_pressed(input)))
+            .unwrap_or(false)
+    }
+
+    /// Get the value of an axis in the range [-1.0, 1.0].
+    ///
+    /// Negative buttons contribute -1.0, positive buttons +1.0.
+    /// If both sides are pressed, they cancel out.
+    pub fn axis(&self, input: &InputState, axis: &ActionId) -> f32 {
+        if let Some(binding) = self.axes.get(axis) {
+            let mut value = 0.0;
+            if binding.negative.iter().any(|&b| b.is_down(input)) {
+                value -= 1.0;
+            }
+            if binding.positive.iter().any(|&b| b.is_down(input)) {
+                value += 1.0;
+            }
+            value
+        } else {
+            0.0
+        }
+    }
 }
 
 fn mouse_button_index(button: MouseButton) -> Option<usize> {
@@ -147,7 +284,10 @@ fn mouse_button_index(button: MouseButton) -> Option<usize> {
         MouseButton::Left => Some(0),
         MouseButton::Right => Some(1),
         MouseButton::Middle => Some(2),
-        MouseButton::Other(idx) if (idx as usize) < 8 => Some(idx as usize),
-        _ => None,
+        MouseButton::Other(raw) => {
+            let idx = raw as usize;
+            let mapped = 3 + idx; // Reserve 0-2 for Left/Right/Middle
+            (mapped < 8).then_some(mapped)
+        }
     }
 }

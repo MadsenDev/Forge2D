@@ -1,0 +1,166 @@
+use std::any::{Any, TypeId};
+use std::collections::{HashMap, HashSet};
+
+/// Unique identifier for an entity in the world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EntityId(u32);
+
+impl EntityId {
+    /// Get the underlying integer ID (useful for debugging or serialization).
+    pub fn to_u32(self) -> u32 {
+        self.0
+    }
+}
+
+/// Simple entity/world container with typed component storage.
+///
+/// This is a minimal "ECS-like" world:
+/// - Entities are identified by `EntityId`
+/// - Components are stored in type-based maps keyed by `EntityId`
+/// - Components are indexed by their Rust type (`T: 'static`)
+///
+/// It is intentionally small and focused on:
+/// - `spawn` / `despawn`
+/// - `add` / `remove` / `get` components
+/// - simple iteration over components of a single type
+pub struct World {
+    next_id: u32,
+    alive: HashSet<EntityId>,
+    storages: HashMap<TypeId, Box<dyn Any>>,
+}
+
+impl World {
+    /// Create a new, empty world.
+    pub fn new() -> Self {
+        Self {
+            next_id: 1,
+            alive: HashSet::new(),
+            storages: HashMap::new(),
+        }
+    }
+
+    /// Spawn a new entity and return its `EntityId`.
+    pub fn spawn(&mut self) -> EntityId {
+        let id = EntityId(self.next_id);
+        self.next_id = self.next_id.wrapping_add(1).max(1);
+        self.alive.insert(id);
+        id
+    }
+
+    /// Despawn an entity, removing it and all of its components.
+    pub fn despawn(&mut self, entity: EntityId) -> bool {
+        if !self.alive.remove(&entity) {
+            return false;
+        }
+
+        // Remove from all storages.
+        for storage in self.storages.values_mut() {
+            if let Some(map) = storage.downcast_mut::<HashMap<EntityId, Box<dyn Any>>>() {
+                map.remove(&entity);
+            }
+        }
+
+        true
+    }
+
+    /// Check if an entity is currently alive.
+    pub fn is_alive(&self, entity: EntityId) -> bool {
+        self.alive.contains(&entity)
+    }
+
+    /// Number of alive entities.
+    pub fn len(&self) -> usize {
+        self.alive.len()
+    }
+
+    /// Returns true if there are no entities in the world.
+    pub fn is_empty(&self) -> bool {
+        self.alive.is_empty()
+    }
+
+    /// Insert a component of type `T` for an entity, overwriting any existing component of that type.
+    pub fn insert<T: Any>(&mut self, entity: EntityId, component: T) {
+        let type_id = TypeId::of::<T>();
+
+        let storage = self
+            .storages
+            .entry(type_id)
+            .or_insert_with(|| Box::new(HashMap::<EntityId, Box<dyn Any>>::new()));
+
+        let map = storage
+            .downcast_mut::<HashMap<EntityId, Box<dyn Any>>>()
+            .expect("World storage type mismatch");
+
+        map.insert(entity, Box::new(component));
+    }
+
+    /// Remove and return a component of type `T` for an entity, if it exists.
+    pub fn remove<T: Any>(&mut self, entity: EntityId) -> Option<T> {
+        let type_id = TypeId::of::<T>();
+        let storage = self.storages.get_mut(&type_id)?;
+        let map = storage
+            .downcast_mut::<HashMap<EntityId, Box<dyn Any>>>()
+            .expect("World storage type mismatch");
+
+        map.remove(&entity)
+            .and_then(|boxed| boxed.downcast::<T>().ok())
+            .map(|boxed| *boxed)
+    }
+
+    /// Get an immutable reference to a component of type `T` for an entity.
+    pub fn get<T: Any>(&self, entity: EntityId) -> Option<&T> {
+        let type_id = TypeId::of::<T>();
+        let storage = self.storages.get(&type_id)?;
+        let map = storage
+            .downcast_ref::<HashMap<EntityId, Box<dyn Any>>>()
+            .expect("World storage type mismatch");
+
+        map.get(&entity)
+            .and_then(|boxed| boxed.downcast_ref::<T>())
+    }
+
+    /// Get a mutable reference to a component of type `T` for an entity.
+    pub fn get_mut<T: Any>(&mut self, entity: EntityId) -> Option<&mut T> {
+        let type_id = TypeId::of::<T>();
+        let storage = self.storages.get_mut(&type_id)?;
+        let map = storage
+            .downcast_mut::<HashMap<EntityId, Box<dyn Any>>>()
+            .expect("World storage type mismatch");
+
+        map.get_mut(&entity)
+            .and_then(|boxed| boxed.downcast_mut::<T>())
+    }
+
+    /// Iterate over all entities that have a component of type `T`.
+    ///
+    /// Returns a vector of `(EntityId, &T)` pairs.
+    /// For simplicity (and to avoid lifetime gymnastics) this collects
+    /// results into an owned `Vec`. For most games this is sufficient.
+    pub fn query<T: Any>(&self) -> Vec<(EntityId, &T)> {
+        let type_id = TypeId::of::<T>();
+        let storage = match self.storages.get(&type_id) {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        let map = storage
+            .downcast_ref::<HashMap<EntityId, Box<dyn Any>>>()
+            .expect("World storage type mismatch");
+
+        map.iter()
+            .filter_map(|(&entity, boxed)| {
+                boxed
+                    .downcast_ref::<T>()
+                    .map(|comp| (entity, comp))
+            })
+            .collect()
+    }
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+
