@@ -651,6 +651,7 @@ impl WgpuBackend {
             };
 
             // Rasterize the glyph - use the trait method (available via ScaleFont import)
+            // Rasterize outlined glyphs (most characters)
             if let Some(outlined) = scaled_font.outline_glyph(glyph) {
                 let bounds = outlined.px_bounds();
                 let width = bounds.width().ceil() as u32;
@@ -708,6 +709,27 @@ impl WgpuBackend {
                         advance,
                     ));
                 }
+            } else {
+                // Glyphs with no outline (e.g., spaces) still need an advance so spacing works.
+                let mut advance = scaled_font.h_advance(glyph_id);
+
+                if advance <= 0.0 {
+                    // Ensure we still move forward if a font reports a zero-advance glyph
+                    advance = size * 0.5; // approximate spacing based on font size
+                }
+
+                // Cache a placeholder entry so we don't keep re-processing whitespace every frame.
+                glyph_data.push((
+                    ch,
+                    vec![0u8; 4], // 1x1 transparent texel
+                    1,
+                    1,
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    advance,
+                ));
             }
         }
 
@@ -782,6 +804,9 @@ impl WgpuBackend {
                 // If for some reason the glyph is still missing from the cache,
                 // skip drawing this character instead of erroring every frame.
                 let Some(glyph) = self.text_renderer.get_glyph(font, ch, size) else {
+                    // Even if we can't draw the glyph, advance by its metric so layout stays intact.
+                    x += scaled_font.h_advance(glyph_id);
+                    prev_glyph = Some(glyph_id);
                     continue;
                 };
 
@@ -798,19 +823,22 @@ impl WgpuBackend {
                 )
             };
 
-            // Create sprite for this glyph (now we can mutably borrow self)
-            let mut sprite = Sprite::new(texture_handle);
+            // Skip drawing glyphs with no visible area (e.g., spaces) but still advance.
+            if width > 0.0 && height > 0.0 {
+                // Create sprite for this glyph (now we can mutably borrow self)
+                let mut sprite = Sprite::new(texture_handle);
 
-            // Position glyph relative to baseline origin
-            // bearing_x offsets the sprite left/right from the origin
-            // bearing_y offsets the sprite up/down from the baseline (inverted for screen coords)
-            // Nearest filtering ensures crisp rendering without needing integer snapping
-            sprite.transform.position = Vec2::new(x + bearing_x, y - bearing_y);
-            sprite.transform.scale = Vec2::new(width, height);
-            sprite.tint = color;
+                // Position glyph relative to baseline origin
+                // bearing_x offsets the sprite left/right from the origin
+                // bearing_y offsets the sprite up/down from the baseline (inverted for screen coords)
+                // Nearest filtering ensures crisp rendering without needing integer snapping
+                sprite.transform.position = Vec2::new(x + bearing_x, y - bearing_y);
+                sprite.transform.scale = Vec2::new(width, height);
+                sprite.tint = color;
 
-            // Draw the glyph sprite
-            self.draw_sprite(frame, &sprite, camera)?;
+                // Draw the glyph sprite
+                self.draw_sprite(frame, &sprite, camera)?;
+            }
 
             // Advance to next character's origin position
             // The advance value from the font already accounts for proper spacing
