@@ -749,16 +749,17 @@ impl WgpuBackend {
         color: [f32; 4],
         camera: &Camera2D,
     ) -> Result<()> {
-        let font_ref = self
-            .text_renderer
-            .get_font(font)
-            .ok_or_else(|| anyhow!("Font not found"))?;
-        let scaled_font = font_ref.as_scaled(ab_glyph::PxScale::from(size));
-
         // Ensure all glyphs for this text are rasterized and cached before drawing.
         // This makes the API easier to use: callers don't need to remember to
         // call `rasterize_text_glyphs`/`ensure_glyphs_rasterized` separately.
         self.ensure_glyphs_rasterized(text, font, size)?;
+
+        let font_ref = self
+            .text_renderer
+            .get_font(font)
+            .cloned()
+            .ok_or_else(|| anyhow!("Font not found"))?;
+        let scaled_font = font_ref.as_scaled(ab_glyph::PxScale::from(size));
 
         // Start with the exact position - Nearest filtering will handle crisp rendering
         let mut x = position.x;
