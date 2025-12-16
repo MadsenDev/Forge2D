@@ -19,3 +19,4 @@ glam.workspace = true
 image.workspace = true
 rodio.workspace = true
 ab_glyph.workspace = true
+rapier2d.workspace = true

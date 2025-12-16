@@ -4,6 +4,7 @@ members = [
     "examples/basic_game",
     "examples/state_demo",
     "examples/full_game",
+    "examples/physics_demo",
 ]
 resolver = "2"
 
@@ -24,3 +25,4 @@ glam = "0.24"
 image = { version = "0.24", default-features = false, features = ["png"] }
 rodio = "0.17"
 ab_glyph = "0.2"
+rapier2d = "0.14"
