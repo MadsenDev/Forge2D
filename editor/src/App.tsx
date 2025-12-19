@@ -29,15 +29,6 @@ function App() {
   const [currentTool, setCurrentTool] = useState<Tool>("move");
   const [inspectorRefreshTrigger, setInspectorRefreshTrigger] = useState(0);
   const [fileExplorerRefreshToken, setFileExplorerRefreshToken] = useState(0);
-  const [draggingTab, setDraggingTab] = useState<null | TabId>(null);
-  const [dockLayout, setDockLayout] = useState<Record<Zone, TabId[]>>({
-    left: ["hierarchy", "files"],
-    right: ["inspector"],
-  });
-  const [activeTabs, setActiveTabs] = useState<Record<Zone, TabId | null>>({
-    left: "hierarchy",
-    right: "inspector",
-  });
 
   // Check if project is open on mount
   useEffect(() => {
@@ -287,292 +278,108 @@ function App() {
     return <Welcome onProjectOpen={handleProjectOpen} />;
   }
 
-  const TAB_CONFIG: Record<TabId, { title: string; subtitle: string }> = {
-    hierarchy: { title: "Hierarchy", subtitle: "Scene graph" },
-    files: { title: "File Explorer", subtitle: "Project files" },
-    inspector: { title: "Inspector", subtitle: "Selected entity" },
-  };
-
-  const getActiveTabForZone = (zone: Zone) => {
-    const tabFromState = activeTabs[zone];
-    if (tabFromState && dockLayout[zone].includes(tabFromState)) {
-      return tabFromState;
-    }
-    return dockLayout[zone][0] ?? null;
-  };
-
-  const moveTabToZone = (tabId: TabId, targetZone: Zone) => {
-    setDockLayout(prevLayout => {
-      const cleanedLayout: Record<Zone, TabId[]> = {
-        left: prevLayout.left.filter(id => id !== tabId),
-        right: prevLayout.right.filter(id => id !== tabId),
-      };
-
-      const nextLayout: Record<Zone, TabId[]> = {
-        ...cleanedLayout,
-        [targetZone]: [...cleanedLayout[targetZone], tabId],
-      };
-
-      setActiveTabs(prevActive => {
-        const nextActive: Record<Zone, TabId | null> = { ...prevActive };
-        (Object.keys(nextLayout) as Zone[]).forEach(zone => {
-          const available = nextLayout[zone];
-          if (!available.length) {
-            nextActive[zone] = null;
-            return;
-          }
-          if (!available.includes(nextActive[zone] as TabId)) {
-            nextActive[zone] = available[0];
-          }
-        });
-        nextActive[targetZone] = tabId;
-        return nextActive;
-      });
-
-      return nextLayout;
-    });
-  };
-
-  const renderTabContent = (tabId: TabId | null) => {
-    if (!tabId) {
-      return <div className="panel-empty">Drag a tab here to dock it.</div>;
-    }
-
-    switch (tabId) {
-      case "hierarchy":
-        return (
-          <Hierarchy
-            entities={entities}
-            selectedEntityId={selectedEntityId}
-            onEntityClick={async (id) => {
-              await handleEntityClick(id);
-            }}
-          />
-        );
-      case "files":
-        return <FileExplorer refreshToken={fileExplorerRefreshToken} />;
-      case "inspector":
-        return <Inspector selectedEntityId={selectedEntityId} refreshTrigger={inspectorRefreshTrigger} />;
-      default:
-        return null;
-    }
-  };
-
-  const renderTabActions = (tabId: TabId | null) => {
-    if (!tabId) return null;
-
-    if (tabId === "hierarchy") {
-      return (
-        <div className="action-row">
-          <button onClick={handleCreateEntity} disabled={isPlaying} className="ghost-button">
-            + Entity
-          </button>
-          <button
-            onClick={() => selectedEntityId !== null && handleDuplicateEntity(selectedEntityId)}
-            disabled={selectedEntityId === null || isPlaying}
-            className="command-button subtle"
-          >
-            Duplicate
-          </button>
-          <button
-            onClick={() => selectedEntityId !== null && handleDeleteEntity(selectedEntityId)}
-            disabled={selectedEntityId === null || isPlaying}
-            className="command-button danger"
-          >
-            Delete
-          </button>
-        </div>
-      );
-    }
-
-    if (tabId === "files") {
-      return (
-        <button onClick={() => setFileExplorerRefreshToken((t) => t + 1)} className="ghost-button">
-          Refresh
-        </button>
-      );
-    }
-
-    if (tabId === "inspector") {
-      return <div className="pill muted">Live</div>;
-    }
-
-    return null;
-  };
-
-  const renderTabFooter = (tabId: TabId | null) => {
-    if (!tabId) return null;
-
-    if (tabId === "hierarchy") {
-      return (
-        <div className="panel-footer">
-          <div className="pill muted">{entities.length} entities</div>
-        </div>
-      );
-    }
-
-    if (tabId === "files") {
-      return (
-        <div className="panel-footer justify-between">
-          <div className="pill muted">Scenes & Assets</div>
-          <button onClick={() => setFileExplorerRefreshToken((t) => t + 1)} className="command-button">
-            Refresh
-          </button>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  const renderDockZone = (zone: Zone) => {
-    const zoneTabs = dockLayout[zone];
-    const activeTab = getActiveTabForZone(zone);
-
-    return (
-      <div
-        className={`panel dock-panel ${draggingTab && draggingTab !== activeTab ? "droppable" : ""}`}
-        onDragOver={(e) => {
-          if (draggingTab) {
-            e.preventDefault();
-          }
-        }}
-        onDrop={(e) => {
-          const tabId = e.dataTransfer.getData("text/tab-id") as TabId;
-          if (tabId) {
-            moveTabToZone(tabId, zone);
-          }
-          setDraggingTab(null);
-        }}
-        onDragLeave={() => setDraggingTab(null)}
-      >
-        <div className="panel-header dock-header">
-          <div className="dock-header-titles">
-            <div className="dock-tabs">
-              {zoneTabs.map((tabId) => (
-                <button
-                  key={tabId}
-                  className={`tab-button ${activeTab === tabId ? "active" : ""}`}
-                  onClick={() => setActiveTabs(prev => ({ ...prev, [zone]: tabId }))}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData("text/tab-id", tabId);
-                    e.dataTransfer.effectAllowed = "move";
-                    setDraggingTab(tabId);
-                  }}
-                  onDragEnd={() => setDraggingTab(null)}
-                  title="Drag to another dock"
-                >
-                  <span className="tab-label">{TAB_CONFIG[tabId].title}</span>
-                </button>
-              ))}
-              {!zoneTabs.length && <div className="pill muted">Drop a tab to pin it here</div>}
-            </div>
-            {activeTab && (
-              <>
-                <p className="panel-title">{TAB_CONFIG[activeTab].title}</p>
-                <p className="panel-subtitle">{TAB_CONFIG[activeTab].subtitle}</p>
-              </>
-            )}
-          </div>
-          <div className="dock-actions">{renderTabActions(activeTab)}</div>
-        </div>
-        <div className="panel-body">{renderTabContent(activeTab)}</div>
-        {renderTabFooter(activeTab)}
-      </div>
-    );
-  };
-
   return (
-    <div className="app-shell">
-      <div className="app-ambient app-ambient-left" />
-      <div className="app-ambient app-ambient-right" />
-      <div className="app-frame">
-        <header className="command-bar">
-          <div className="brand">
-            <div className="brand-mark">F</div>
-            <div>
-              <div className="brand-title">Forge2D Editor</div>
-              <div className="brand-subtitle">Design. Iterate. Ship.</div>
+    <div className="unity-shell">
+      <header className="unity-menu-bar">
+        <div className="menu-left">
+          <div className="menu-logo">Unity</div>
+          <nav className="menu-items">
+            {["File", "Edit", "Assets", "GameObject", "Component", "Window", "Help"].map(item => (
+              <span key={item} className="menu-item">
+                {item}
+              </span>
+            ))}
+          </nav>
+        </div>
+        <div className="menu-right">
+          <span className="menu-status">Layout: 2 by 3</span>
+          <span className="menu-status">{projectName ?? "No project"}</span>
+        </div>
+      </header>
+
+      <div className="unity-toolbar-row">
+        <Toolbar
+          currentTool={currentTool}
+          onToolChange={setCurrentTool}
+          isPlaying={isPlaying}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onNewScene={handleNewScene}
+          onSave={handleSave}
+          onLoad={handleLoad}
+          onPlay={handlePlay}
+          onStop={handleStop}
+        />
+      </div>
+
+      <div className="unity-grid">
+        <section className="panel unity-panel hierarchy-area">
+          <header className="panel-header tight">
+            <div className="panel-tabs">
+              <span className="panel-tab active">Hierarchy</span>
             </div>
+            <div className="panel-actions">
+              <button onClick={handleCreateEntity} disabled={isPlaying} className="unity-button">
+                Create
+              </button>
+              <button
+                onClick={() => selectedEntityId !== null && handleDuplicateEntity(selectedEntityId)}
+                disabled={selectedEntityId === null || isPlaying}
+                className="unity-button muted"
+              >
+                Duplicate
+              </button>
+              <button
+                onClick={() => selectedEntityId !== null && handleDeleteEntity(selectedEntityId)}
+                disabled={selectedEntityId === null || isPlaying}
+                className="unity-button danger"
+              >
+                Delete
+              </button>
+            </div>
+          </header>
+          <div className="panel-body muted-bg">
+            <Hierarchy
+              entities={entities}
+              selectedEntityId={selectedEntityId}
+              onEntityClick={async (id) => {
+                await handleEntityClick(id);
+              }}
+            />
           </div>
-          <div className="command-actions">
-            <div className="command-group">
-              <span className="command-label">Scene</span>
-              <button onClick={handleNewScene} disabled={isPlaying} className="command-button">
-                New Scene
-              </button>
-              <button onClick={handleSave} disabled={isPlaying} className="command-button primary">
-                Save
-              </button>
-              <button onClick={handleLoad} disabled={isPlaying} className="command-button">
-                Load
-              </button>
-            </div>
-            <div className="command-divider" />
-            <div className="command-group">
-              <span className="command-label">Project</span>
-              <div className="command-info">
-                <div className="pill">{projectName ?? "No project loaded"}</div>
-                {projectName && (
-                  <button
-                    onClick={async () => {
-                      try {
-                        await invoke("project_close");
-                        setHasProject(false);
-                        setProjectName(null);
-                      } catch (e) {
-                        alert(`Failed to close project: ${e}`);
-                      }
-                    }}
-                    className="command-button danger"
-                  >
-                    Close
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </header>
+          <footer className="panel-footer tight">
+            <span className="panel-footnote">{entities.length} objects in scene</span>
+          </footer>
+        </section>
 
-        <div className="workspace-grid">
-          {renderDockZone("left")}
-
-          <div className="workspace-center">
-            <div className="panel floating">
-              <Toolbar
-                currentTool={currentTool}
-                onToolChange={setCurrentTool}
-                isPlaying={isPlaying}
-                onUndo={handleUndo}
-                onRedo={handleRedo}
-                canUndo={canUndo}
-                canRedo={canRedo}
-                onNewScene={handleNewScene}
-                onSave={handleSave}
-                onLoad={handleLoad}
-                onPlay={handlePlay}
-                onStop={handleStop}
-              />
+        <section className={`panel unity-panel scene-area ${isPlaying ? "playing" : ""}`}>
+          <header className="panel-header tight">
+            <div className="panel-tabs">
+              <span className="panel-tab active">Scene</span>
+              <span className="panel-tab">Game</span>
             </div>
-
-            <div className={`panel viewport-panel flex-1 overflow-hidden ${isPlaying ? "ring-2 ring-green-500/70" : ""}`}>
-              {isPlaying && (
-                <div className="mode-banner">PLAY MODE</div>
-              )}
-              <div className="viewport-hud">
-                <div className="pill">Tool: {currentTool}</div>
-                <div className="pill">Selection: {selectedEntityId ?? "None"}</div>
-                <div className="pill muted">Undo: {canUndo ? "Available" : "-"} / Redo: {canRedo ? "Available" : "-"}</div>
-              </div>
+            <div className="panel-actions">
+              <span className="panel-footnote">Shaded</span>
+            </div>
+          </header>
+          <div className="scene-viewport">
+            {isPlaying && <div className="mode-banner">Play Mode</div>}
+            <div className="viewport-toolbar">
+              <span className="viewport-pill">Tool: {currentTool}</span>
+              <span className="viewport-pill">Selection: {selectedEntityId ?? "None"}</span>
+              <span className="viewport-pill muted">
+                Undo: {canUndo ? "Available" : "-"} / Redo: {canRedo ? "Available" : "-"}
+              </span>
+            </div>
+            <div className="viewport-surface">
               <Viewport
                 entities={entities}
                 selectedEntityId={selectedEntityId}
                 onEntityClick={handleEntityClick}
                 onTransformChange={async () => {
-                  // Refresh entities to get updated positions
                   await refreshEntities();
-                  // Trigger inspector refresh to show updated values
                   setInspectorRefreshTrigger(prev => prev + 1);
                 }}
                 isPlaying={isPlaying}
@@ -580,16 +387,61 @@ function App() {
               />
             </div>
           </div>
+        </section>
 
-          {renderDockZone("right")}
-        </div>
+        <section className="panel unity-panel inspector-area">
+          <header className="panel-header tight">
+            <div className="panel-tabs">
+              <span className="panel-tab active">Inspector</span>
+              <span className="panel-tab">Services</span>
+            </div>
+            <div className="panel-actions">
+              <span className="panel-footnote muted">Static</span>
+            </div>
+          </header>
+          <div className="panel-body">
+            <Inspector selectedEntityId={selectedEntityId} refreshTrigger={inspectorRefreshTrigger} />
+          </div>
+        </section>
+
+        <section className="panel unity-panel project-area">
+          <header className="panel-header tight">
+            <div className="panel-tabs">
+              <span className="panel-tab active">Project</span>
+              <span className="panel-tab">Console</span>
+              <span className="panel-tab">Animator</span>
+            </div>
+            <div className="panel-actions">
+              <button onClick={() => setFileExplorerRefreshToken((t) => t + 1)} className="unity-button muted">
+                Refresh
+              </button>
+            </div>
+          </header>
+          <div className="panel-body muted-bg">
+            <FileExplorer refreshToken={fileExplorerRefreshToken} />
+          </div>
+        </section>
+
+        <section className="panel unity-panel console-area">
+          <header className="panel-header tight">
+            <div className="panel-tabs">
+              <span className="panel-tab active">Console</span>
+            </div>
+            <div className="panel-actions">
+              <span className="panel-footnote muted">Clear</span>
+            </div>
+          </header>
+          <div className="panel-body console-body">
+            <div className="console-line">Project: {projectName ?? "No project open"}</div>
+            <div className="console-line">Play state: {isPlaying ? "Running" : "Stopped"}</div>
+            <div className="console-line">Selection: {selectedEntityId ?? "None"}</div>
+            <div className="console-line">Layout: Unity 2 by 3</div>
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
 export default App;
-
-type TabId = "hierarchy" | "files" | "inspector";
-type Zone = "left" | "right";
 
