@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import Inspector from "./Inspector";
 import Viewport from "./Viewport";
 import Hierarchy from "./Hierarchy";
+import FileExplorer from "./FileExplorer";
 import Toolbar, { Tool } from "./Toolbar";
 import Welcome from "./Welcome";
 import "./App.css";
@@ -27,6 +28,8 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTool, setCurrentTool] = useState<Tool>("move");
   const [inspectorRefreshTrigger, setInspectorRefreshTrigger] = useState(0);
+  const [leftTab, setLeftTab] = useState<"hierarchy" | "files">("hierarchy");
+  const [fileExplorerRefreshToken, setFileExplorerRefreshToken] = useState(0);
 
   // Check if project is open on mount
   useEffect(() => {
@@ -332,46 +335,86 @@ function App() {
           {/* Left Sidebar - Entity Hierarchy */}
           <div className="panel w-72 flex flex-col">
             <div className="panel-header">
-              <div>
-                <p className="panel-title">Hierarchy</p>
-                <p className="panel-subtitle">Scene graph</p>
+              <div className="flex flex-col gap-1">
+                <div className="panel-tabs">
+                  <button
+                    className={`tab-button ${leftTab === "hierarchy" ? "active" : ""}`}
+                    onClick={() => setLeftTab("hierarchy")}
+                  >
+                    Hierarchy
+                  </button>
+                  <button
+                    className={`tab-button ${leftTab === "files" ? "active" : ""}`}
+                    onClick={() => setLeftTab("files")}
+                  >
+                    File Explorer
+                  </button>
+                </div>
+                <p className="panel-subtitle">
+                  {leftTab === "hierarchy" ? "Scene graph" : "Project files"}
+                </p>
               </div>
-              <button
-                onClick={handleCreateEntity}
-                disabled={isPlaying}
-                className="ghost-button"
-              >
-                + Entity
-              </button>
+              {leftTab === "hierarchy" ? (
+                <button
+                  onClick={handleCreateEntity}
+                  disabled={isPlaying}
+                  className="ghost-button"
+                >
+                  + Entity
+                </button>
+              ) : (
+                <button
+                  onClick={() => setFileExplorerRefreshToken((t) => t + 1)}
+                  className="ghost-button"
+                >
+                  Refresh
+                </button>
+              )}
             </div>
             <div className="flex-1 overflow-hidden">
               <div className="panel-body">
-                <Hierarchy
-                  entities={entities}
-                  selectedEntityId={selectedEntityId}
-                  onEntityClick={async (id) => {
-                    await handleEntityClick(id);
-                  }}
-                />
+                {leftTab === "hierarchy" ? (
+                  <Hierarchy
+                    entities={entities}
+                    selectedEntityId={selectedEntityId}
+                    onEntityClick={async (id) => {
+                      await handleEntityClick(id);
+                    }}
+                  />
+                ) : (
+                  <FileExplorer refreshToken={fileExplorerRefreshToken} />
+                )}
               </div>
             </div>
-            <div className="panel-footer">
-              <div className="pill muted">{entities.length} entities</div>
-              <button
-                onClick={() => selectedEntityId !== null && handleDuplicateEntity(selectedEntityId)}
-                disabled={selectedEntityId === null || isPlaying}
-                className="command-button"
-              >
-                Duplicate
-              </button>
-              <button
-                onClick={() => selectedEntityId !== null && handleDeleteEntity(selectedEntityId)}
-                disabled={selectedEntityId === null || isPlaying}
-                className="command-button danger"
-              >
-                Delete
-              </button>
-            </div>
+            {leftTab === "hierarchy" ? (
+              <div className="panel-footer">
+                <div className="pill muted">{entities.length} entities</div>
+                <button
+                  onClick={() => selectedEntityId !== null && handleDuplicateEntity(selectedEntityId)}
+                  disabled={selectedEntityId === null || isPlaying}
+                  className="command-button"
+                >
+                  Duplicate
+                </button>
+                <button
+                  onClick={() => selectedEntityId !== null && handleDeleteEntity(selectedEntityId)}
+                  disabled={selectedEntityId === null || isPlaying}
+                  className="command-button danger"
+                >
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <div className="panel-footer justify-between">
+                <div className="pill muted">Scenes & Assets</div>
+                <button
+                  onClick={() => setFileExplorerRefreshToken((t) => t + 1)}
+                  className="command-button"
+                >
+                  Refresh
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Main Content Area */}
