@@ -28,8 +28,16 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTool, setCurrentTool] = useState<Tool>("move");
   const [inspectorRefreshTrigger, setInspectorRefreshTrigger] = useState(0);
-  const [leftTab, setLeftTab] = useState<"hierarchy" | "files">("hierarchy");
   const [fileExplorerRefreshToken, setFileExplorerRefreshToken] = useState(0);
+  const [draggingTab, setDraggingTab] = useState<null | TabId>(null);
+  const [dockLayout, setDockLayout] = useState<Record<Zone, TabId[]>>({
+    left: ["hierarchy", "files"],
+    right: ["inspector"],
+  });
+  const [activeTabs, setActiveTabs] = useState<Record<Zone, TabId | null>>({
+    left: "hierarchy",
+    right: "inspector",
+  });
 
   // Check if project is open on mount
   useEffect(() => {
@@ -279,6 +287,202 @@ function App() {
     return <Welcome onProjectOpen={handleProjectOpen} />;
   }
 
+  const TAB_CONFIG: Record<TabId, { title: string; subtitle: string }> = {
+    hierarchy: { title: "Hierarchy", subtitle: "Scene graph" },
+    files: { title: "File Explorer", subtitle: "Project files" },
+    inspector: { title: "Inspector", subtitle: "Selected entity" },
+  };
+
+  const getActiveTabForZone = (zone: Zone) => {
+    const tabFromState = activeTabs[zone];
+    if (tabFromState && dockLayout[zone].includes(tabFromState)) {
+      return tabFromState;
+    }
+    return dockLayout[zone][0] ?? null;
+  };
+
+  const moveTabToZone = (tabId: TabId, targetZone: Zone) => {
+    setDockLayout(prevLayout => {
+      const cleanedLayout: Record<Zone, TabId[]> = {
+        left: prevLayout.left.filter(id => id !== tabId),
+        right: prevLayout.right.filter(id => id !== tabId),
+      };
+
+      const nextLayout: Record<Zone, TabId[]> = {
+        ...cleanedLayout,
+        [targetZone]: [...cleanedLayout[targetZone], tabId],
+      };
+
+      setActiveTabs(prevActive => {
+        const nextActive: Record<Zone, TabId | null> = { ...prevActive };
+        (Object.keys(nextLayout) as Zone[]).forEach(zone => {
+          const available = nextLayout[zone];
+          if (!available.length) {
+            nextActive[zone] = null;
+            return;
+          }
+          if (!available.includes(nextActive[zone] as TabId)) {
+            nextActive[zone] = available[0];
+          }
+        });
+        nextActive[targetZone] = tabId;
+        return nextActive;
+      });
+
+      return nextLayout;
+    });
+  };
+
+  const renderTabContent = (tabId: TabId | null) => {
+    if (!tabId) {
+      return <div className="panel-empty">Drag a tab here to dock it.</div>;
+    }
+
+    switch (tabId) {
+      case "hierarchy":
+        return (
+          <Hierarchy
+            entities={entities}
+            selectedEntityId={selectedEntityId}
+            onEntityClick={async (id) => {
+              await handleEntityClick(id);
+            }}
+          />
+        );
+      case "files":
+        return <FileExplorer refreshToken={fileExplorerRefreshToken} />;
+      case "inspector":
+        return <Inspector selectedEntityId={selectedEntityId} refreshTrigger={inspectorRefreshTrigger} />;
+      default:
+        return null;
+    }
+  };
+
+  const renderTabActions = (tabId: TabId | null) => {
+    if (!tabId) return null;
+
+    if (tabId === "hierarchy") {
+      return (
+        <div className="action-row">
+          <button onClick={handleCreateEntity} disabled={isPlaying} className="ghost-button">
+            + Entity
+          </button>
+          <button
+            onClick={() => selectedEntityId !== null && handleDuplicateEntity(selectedEntityId)}
+            disabled={selectedEntityId === null || isPlaying}
+            className="command-button subtle"
+          >
+            Duplicate
+          </button>
+          <button
+            onClick={() => selectedEntityId !== null && handleDeleteEntity(selectedEntityId)}
+            disabled={selectedEntityId === null || isPlaying}
+            className="command-button danger"
+          >
+            Delete
+          </button>
+        </div>
+      );
+    }
+
+    if (tabId === "files") {
+      return (
+        <button onClick={() => setFileExplorerRefreshToken((t) => t + 1)} className="ghost-button">
+          Refresh
+        </button>
+      );
+    }
+
+    if (tabId === "inspector") {
+      return <div className="pill muted">Live</div>;
+    }
+
+    return null;
+  };
+
+  const renderTabFooter = (tabId: TabId | null) => {
+    if (!tabId) return null;
+
+    if (tabId === "hierarchy") {
+      return (
+        <div className="panel-footer">
+          <div className="pill muted">{entities.length} entities</div>
+        </div>
+      );
+    }
+
+    if (tabId === "files") {
+      return (
+        <div className="panel-footer justify-between">
+          <div className="pill muted">Scenes & Assets</div>
+          <button onClick={() => setFileExplorerRefreshToken((t) => t + 1)} className="command-button">
+            Refresh
+          </button>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const renderDockZone = (zone: Zone) => {
+    const zoneTabs = dockLayout[zone];
+    const activeTab = getActiveTabForZone(zone);
+
+    return (
+      <div
+        className={`panel dock-panel ${draggingTab && draggingTab !== activeTab ? "droppable" : ""}`}
+        onDragOver={(e) => {
+          if (draggingTab) {
+            e.preventDefault();
+          }
+        }}
+        onDrop={(e) => {
+          const tabId = e.dataTransfer.getData("text/tab-id") as TabId;
+          if (tabId) {
+            moveTabToZone(tabId, zone);
+          }
+          setDraggingTab(null);
+        }}
+        onDragLeave={() => setDraggingTab(null)}
+      >
+        <div className="panel-header dock-header">
+          <div className="dock-header-titles">
+            <div className="dock-tabs">
+              {zoneTabs.map((tabId) => (
+                <button
+                  key={tabId}
+                  className={`tab-button ${activeTab === tabId ? "active" : ""}`}
+                  onClick={() => setActiveTabs(prev => ({ ...prev, [zone]: tabId }))}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/tab-id", tabId);
+                    e.dataTransfer.effectAllowed = "move";
+                    setDraggingTab(tabId);
+                  }}
+                  onDragEnd={() => setDraggingTab(null)}
+                  title="Drag to another dock"
+                >
+                  <span className="tab-label">{TAB_CONFIG[tabId].title}</span>
+                </button>
+              ))}
+              {!zoneTabs.length && <div className="pill muted">Drop a tab to pin it here</div>}
+            </div>
+            {activeTab && (
+              <>
+                <p className="panel-title">{TAB_CONFIG[activeTab].title}</p>
+                <p className="panel-subtitle">{TAB_CONFIG[activeTab].subtitle}</p>
+              </>
+            )}
+          </div>
+          <div className="dock-actions">{renderTabActions(activeTab)}</div>
+        </div>
+        <div className="panel-body">{renderTabContent(activeTab)}</div>
+        {renderTabFooter(activeTab)}
+      </div>
+    );
+  };
+
   return (
     <div className="app-shell">
       <div className="app-ambient app-ambient-left" />
@@ -289,7 +493,7 @@ function App() {
             <div className="brand-mark">F</div>
             <div>
               <div className="brand-title">Forge2D Editor</div>
-              <div className="brand-subtitle">Unity-inspired workflow</div>
+              <div className="brand-subtitle">Design. Iterate. Ship.</div>
             </div>
           </div>
           <div className="command-actions">
@@ -331,94 +535,10 @@ function App() {
           </div>
         </header>
 
-        <div className="flex-1 flex overflow-hidden px-4 pb-4 gap-4">
-          {/* Left Sidebar - Entity Hierarchy */}
-          <div className="panel w-72 flex flex-col">
-            <div className="panel-header">
-              <div className="flex flex-col gap-1">
-                <div className="panel-tabs">
-                  <button
-                    className={`tab-button ${leftTab === "hierarchy" ? "active" : ""}`}
-                    onClick={() => setLeftTab("hierarchy")}
-                  >
-                    Hierarchy
-                  </button>
-                  <button
-                    className={`tab-button ${leftTab === "files" ? "active" : ""}`}
-                    onClick={() => setLeftTab("files")}
-                  >
-                    File Explorer
-                  </button>
-                </div>
-                <p className="panel-subtitle">
-                  {leftTab === "hierarchy" ? "Scene graph" : "Project files"}
-                </p>
-              </div>
-              {leftTab === "hierarchy" ? (
-                <button
-                  onClick={handleCreateEntity}
-                  disabled={isPlaying}
-                  className="ghost-button"
-                >
-                  + Entity
-                </button>
-              ) : (
-                <button
-                  onClick={() => setFileExplorerRefreshToken((t) => t + 1)}
-                  className="ghost-button"
-                >
-                  Refresh
-                </button>
-              )}
-            </div>
-            <div className="flex-1 overflow-hidden">
-              <div className="panel-body">
-                {leftTab === "hierarchy" ? (
-                  <Hierarchy
-                    entities={entities}
-                    selectedEntityId={selectedEntityId}
-                    onEntityClick={async (id) => {
-                      await handleEntityClick(id);
-                    }}
-                  />
-                ) : (
-                  <FileExplorer refreshToken={fileExplorerRefreshToken} />
-                )}
-              </div>
-            </div>
-            {leftTab === "hierarchy" ? (
-              <div className="panel-footer">
-                <div className="pill muted">{entities.length} entities</div>
-                <button
-                  onClick={() => selectedEntityId !== null && handleDuplicateEntity(selectedEntityId)}
-                  disabled={selectedEntityId === null || isPlaying}
-                  className="command-button"
-                >
-                  Duplicate
-                </button>
-                <button
-                  onClick={() => selectedEntityId !== null && handleDeleteEntity(selectedEntityId)}
-                  disabled={selectedEntityId === null || isPlaying}
-                  className="command-button danger"
-                >
-                  Delete
-                </button>
-              </div>
-            ) : (
-              <div className="panel-footer justify-between">
-                <div className="pill muted">Scenes & Assets</div>
-                <button
-                  onClick={() => setFileExplorerRefreshToken((t) => t + 1)}
-                  className="command-button"
-                >
-                  Refresh
-                </button>
-              </div>
-            )}
-          </div>
+        <div className="workspace-grid">
+          {renderDockZone("left")}
 
-          {/* Main Content Area */}
-          <div className="flex-1 flex flex-col gap-3">
+          <div className="workspace-center">
             <div className="panel floating">
               <Toolbar
                 currentTool={currentTool}
@@ -461,17 +581,7 @@ function App() {
             </div>
           </div>
 
-          {/* Right Sidebar - Inspector */}
-          <div className="panel w-80 flex flex-col">
-            <div className="panel-header">
-              <div>
-                <p className="panel-title">Inspector</p>
-                <p className="panel-subtitle">Selected entity data</p>
-              </div>
-              <div className="pill muted">Live</div>
-            </div>
-            <Inspector selectedEntityId={selectedEntityId} refreshTrigger={inspectorRefreshTrigger} />
-          </div>
+          {renderDockZone("right")}
         </div>
       </div>
     </div>
@@ -479,4 +589,7 @@ function App() {
 }
 
 export default App;
+
+type TabId = "hierarchy" | "files" | "inspector";
+type Zone = "left" | "right";
 
