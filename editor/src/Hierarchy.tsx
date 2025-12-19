@@ -39,9 +39,7 @@ function HierarchyNode({
   return (
     <div>
       <div
-        className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer ${
-          isSelected ? "bg-blue-600" : "hover:bg-gray-700"
-        }`}
+        className={`hierarchy-item ${isSelected ? "selected" : ""}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
         onClick={() => onEntityClick(entity.id)}
       >
@@ -51,13 +49,24 @@ function HierarchyNode({
               e.stopPropagation();
               setExpanded(!expanded);
             }}
-            className="w-4 h-4 flex items-center justify-center text-xs"
+            className="collapse-toggle"
+            aria-label={expanded ? "Collapse" : "Expand"}
           >
             {expanded ? "▼" : "▶"}
           </button>
         )}
-        {!hasChildren && <span className="w-4" />}
-        <span className="font-mono text-sm">Entity {entity.id}</span>
+        {!hasChildren && <span className="collapse-placeholder" />}
+        <div className="flex flex-col gap-1">
+          <span className="font-mono text-sm">Entity {entity.id}</span>
+          <div className="flex items-center gap-1 text-[11px] text-gray-400">
+            {entity.has_transform && <span className="component-tag">Transform</span>}
+            {entity.has_sprite && <span className="component-tag">Sprite</span>}
+            {entity.has_physics && <span className="component-tag">Physics</span>}
+            {!entity.has_transform && !entity.has_sprite && !entity.has_physics && (
+              <span className="text-gray-500">Empty</span>
+            )}
+          </div>
+        </div>
       </div>
       {hasChildren && expanded && (
         <div>

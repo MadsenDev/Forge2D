@@ -277,166 +277,159 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-900 text-white">
-      {/* Left Sidebar - Entity Hierarchy */}
-      <div className="w-64 bg-gray-800 border-r border-gray-700 flex flex-col">
-        <div className="p-4 border-b border-gray-700">
-          <h2 className="text-lg font-semibold">Hierarchy</h2>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2">
-          <Hierarchy
-            entities={entities}
-            selectedEntityId={selectedEntityId}
-            onEntityClick={async (id) => {
-              await handleEntityClick(id);
-            }}
-          />
-        </div>
-        <div className="p-2 border-t border-gray-700">
-          <button
-            onClick={handleCreateEntity}
-            disabled={isPlaying}
-            className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Create Entity
-          </button>
-        </div>
-      </div>
-      {/* Entity List View (Hidden) */}
-      <div className="hidden w-64 bg-gray-800 border-r border-gray-700 flex flex-col">
-        <div className="p-4 border-b border-gray-700">
-          <h2 className="text-lg font-semibold">Entities</h2>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2">
-          {entities.length === 0 ? (
-            <p className="text-gray-400 text-sm">No entities</p>
-          ) : (
-            entities.map((entity) => (
-              <div
-                key={entity.id}
-                className={`p-2 mb-1 rounded ${
-                  selectedEntityId === entity.id
-                    ? "bg-blue-600 hover:bg-blue-700"
-                    : "bg-gray-700 hover:bg-gray-600"
-                }`}
-              >
-                <div
-                  onClick={(e) => handleEntityClick(entity.id, e)}
-                  className="cursor-pointer"
-                >
-                  <div className="font-mono text-sm">Entity {entity.id}</div>
-                  <div className="text-xs text-gray-400 mt-1">
-                    {entity.has_transform && "Transform "}
-                    {entity.has_sprite && "Sprite "}
-                    {entity.has_physics && "Physics"}
-                  </div>
-                </div>
-                <div className="flex gap-1 mt-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDuplicateEntity(entity.id);
-                    }}
-                    className="flex-1 px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs"
-                    title="Duplicate"
-                  >
-                    Dup
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteEntity(entity.id);
-                    }}
-                    className="flex-1 px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs"
-                    title="Delete"
-                  >
-                    Del
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-        <div className="p-2 border-t border-gray-700">
-          <button
-            onClick={handleCreateEntity}
-            className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm font-medium"
-          >
-            Create Entity
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Project Header */}
-        {projectName && (
-          <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-400">Project:</span>
-              <span className="text-sm font-medium text-white">{projectName}</span>
+    <div className="app-shell">
+      <div className="app-ambient app-ambient-left" />
+      <div className="app-ambient app-ambient-right" />
+      <div className="app-frame">
+        <header className="command-bar">
+          <div className="brand">
+            <div className="brand-mark">F</div>
+            <div>
+              <div className="brand-title">Forge2D Editor</div>
+              <div className="brand-subtitle">Unity-inspired workflow</div>
             </div>
-            <button
-              onClick={async () => {
-                try {
-                  await invoke("project_close");
-                  setHasProject(false);
-                  setProjectName(null);
-                } catch (e) {
-                  alert(`Failed to close project: ${e}`);
-                }
-              }}
-              className="text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700"
-            >
-              Close Project
-            </button>
           </div>
-        )}
-        {/* Top Toolbar */}
-        <Toolbar
-          currentTool={currentTool}
-          onToolChange={setCurrentTool}
-          isPlaying={isPlaying}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          onNewScene={handleNewScene}
-          onSave={handleSave}
-          onLoad={handleLoad}
-          onPlay={handlePlay}
-          onStop={handleStop}
-        />
-
-        {/* Viewport Area */}
-        <div className={`flex-1 bg-gray-950 overflow-hidden relative ${isPlaying ? "ring-2 ring-green-500" : ""}`}>
-          {isPlaying && (
-            <div className="absolute top-2 left-2 bg-green-600 text-white px-3 py-1 rounded text-sm font-bold z-20">
-              PLAY MODE
+          <div className="command-actions">
+            <div className="command-group">
+              <span className="command-label">Scene</span>
+              <button onClick={handleNewScene} disabled={isPlaying} className="command-button">
+                New Scene
+              </button>
+              <button onClick={handleSave} disabled={isPlaying} className="command-button primary">
+                Save
+              </button>
+              <button onClick={handleLoad} disabled={isPlaying} className="command-button">
+                Load
+              </button>
             </div>
-          )}
-          <Viewport
-            entities={entities}
-            selectedEntityId={selectedEntityId}
-            onEntityClick={handleEntityClick}
-            onTransformChange={async () => {
-              // Refresh entities to get updated positions
-              await refreshEntities();
-              // Trigger inspector refresh to show updated values
-              setInspectorRefreshTrigger(prev => prev + 1);
-            }}
-            isPlaying={isPlaying}
-            tool={currentTool}
-          />
-        </div>
-      </div>
+            <div className="command-divider" />
+            <div className="command-group">
+              <span className="command-label">Project</span>
+              <div className="command-info">
+                <div className="pill">{projectName ?? "No project loaded"}</div>
+                {projectName && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await invoke("project_close");
+                        setHasProject(false);
+                        setProjectName(null);
+                      } catch (e) {
+                        alert(`Failed to close project: ${e}`);
+                      }
+                    }}
+                    className="command-button danger"
+                  >
+                    Close
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </header>
 
-      {/* Right Sidebar - Inspector */}
-      <div className="w-64 bg-gray-800 border-l border-gray-700 flex flex-col">
-        <div className="p-4 border-b border-gray-700">
-          <h2 className="text-lg font-semibold">Inspector</h2>
+        <div className="flex-1 flex overflow-hidden px-4 pb-4 gap-4">
+          {/* Left Sidebar - Entity Hierarchy */}
+          <div className="panel w-72 flex flex-col">
+            <div className="panel-header">
+              <div>
+                <p className="panel-title">Hierarchy</p>
+                <p className="panel-subtitle">Scene graph</p>
+              </div>
+              <button
+                onClick={handleCreateEntity}
+                disabled={isPlaying}
+                className="ghost-button"
+              >
+                + Entity
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <div className="panel-body">
+                <Hierarchy
+                  entities={entities}
+                  selectedEntityId={selectedEntityId}
+                  onEntityClick={async (id) => {
+                    await handleEntityClick(id);
+                  }}
+                />
+              </div>
+            </div>
+            <div className="panel-footer">
+              <div className="pill muted">{entities.length} entities</div>
+              <button
+                onClick={() => selectedEntityId !== null && handleDuplicateEntity(selectedEntityId)}
+                disabled={selectedEntityId === null || isPlaying}
+                className="command-button"
+              >
+                Duplicate
+              </button>
+              <button
+                onClick={() => selectedEntityId !== null && handleDeleteEntity(selectedEntityId)}
+                disabled={selectedEntityId === null || isPlaying}
+                className="command-button danger"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+
+          {/* Main Content Area */}
+          <div className="flex-1 flex flex-col gap-3">
+            <div className="panel floating">
+              <Toolbar
+                currentTool={currentTool}
+                onToolChange={setCurrentTool}
+                isPlaying={isPlaying}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
+                canUndo={canUndo}
+                canRedo={canRedo}
+                onNewScene={handleNewScene}
+                onSave={handleSave}
+                onLoad={handleLoad}
+                onPlay={handlePlay}
+                onStop={handleStop}
+              />
+            </div>
+
+            <div className={`panel viewport-panel flex-1 overflow-hidden ${isPlaying ? "ring-2 ring-green-500/70" : ""}`}>
+              {isPlaying && (
+                <div className="mode-banner">PLAY MODE</div>
+              )}
+              <div className="viewport-hud">
+                <div className="pill">Tool: {currentTool}</div>
+                <div className="pill">Selection: {selectedEntityId ?? "None"}</div>
+                <div className="pill muted">Undo: {canUndo ? "Available" : "-"} / Redo: {canRedo ? "Available" : "-"}</div>
+              </div>
+              <Viewport
+                entities={entities}
+                selectedEntityId={selectedEntityId}
+                onEntityClick={handleEntityClick}
+                onTransformChange={async () => {
+                  // Refresh entities to get updated positions
+                  await refreshEntities();
+                  // Trigger inspector refresh to show updated values
+                  setInspectorRefreshTrigger(prev => prev + 1);
+                }}
+                isPlaying={isPlaying}
+                tool={currentTool}
+              />
+            </div>
+          </div>
+
+          {/* Right Sidebar - Inspector */}
+          <div className="panel w-80 flex flex-col">
+            <div className="panel-header">
+              <div>
+                <p className="panel-title">Inspector</p>
+                <p className="panel-subtitle">Selected entity data</p>
+              </div>
+              <div className="pill muted">Live</div>
+            </div>
+            <Inspector selectedEntityId={selectedEntityId} refreshTrigger={inspectorRefreshTrigger} />
+          </div>
         </div>
-        <Inspector selectedEntityId={selectedEntityId} refreshTrigger={inspectorRefreshTrigger} />
       </div>
     </div>
   );
