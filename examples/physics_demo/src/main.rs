@@ -20,11 +20,11 @@ struct PhysicsDemo {
     colliding_entities: HashSet<forge2d::EntityId>,
 
     last_spawn_time: std::time::Instant,
-    
+
     // Track static entities separately so they don't get deleted on load
     ground_entity: Option<forge2d::EntityId>,
     sensor_entity: Option<forge2d::EntityId>,
-    
+
     // Debug tracking
     debug_entity: Option<forge2d::EntityId>,
     debug_frame_count: u32,
@@ -112,7 +112,8 @@ impl PhysicsDemo {
         let slippery_data: Vec<u8> = (0..(4 * 30 * 30))
             .flat_map(|_| [100u8, 150, 255, 255])
             .collect();
-        self.textures.box_slippery = Some(renderer.load_texture_from_rgba(&slippery_data, 30, 30)?);
+        self.textures.box_slippery =
+            Some(renderer.load_texture_from_rgba(&slippery_data, 30, 30)?);
 
         // Circle (green)
         let circle_size = 30;
@@ -165,9 +166,21 @@ impl PhysicsDemo {
             .create_body(entity, RigidBodyType::Dynamic, position, 0.0)?;
 
         let (shape_obj, _size) = match shape {
-            ShapeType::Box => (ColliderShape::Box { hx: 15.0, hy: 15.0 }, Vec2::new(30.0, 30.0)),
-            ShapeType::Circle => (ColliderShape::Circle { radius: 15.0 }, Vec2::new(30.0, 30.0)),
-            ShapeType::Capsule => (ColliderShape::CapsuleY { half_height: 8.0, radius: 10.0 }, Vec2::new(40.0, 20.0)),
+            ShapeType::Box => (
+                ColliderShape::Box { hx: 15.0, hy: 15.0 },
+                Vec2::new(30.0, 30.0),
+            ),
+            ShapeType::Circle => (
+                ColliderShape::Circle { radius: 15.0 },
+                Vec2::new(30.0, 30.0),
+            ),
+            ShapeType::Capsule => (
+                ColliderShape::CapsuleY {
+                    half_height: 8.0,
+                    radius: 10.0,
+                },
+                Vec2::new(40.0, 20.0),
+            ),
         };
 
         if is_sensor {
@@ -225,7 +238,10 @@ impl Game for PhysicsDemo {
         )?;
         self.physics.add_collider_with_material(
             ground_entity,
-            ColliderShape::Box { hx: 300.0, hy: 15.0 },
+            ColliderShape::Box {
+                hx: 300.0,
+                hy: 15.0,
+            },
             Vec2::ZERO,
             0.0,
             0.7,
@@ -255,14 +271,39 @@ impl Game for PhysicsDemo {
 
         // Spawn initial objects
         for i in 0..3 {
-            self.spawn_object(Vec2::new(screen_w * 0.2 + i as f32 * 40.0, 100.0), ShapeType::Box, MaterialType::Bouncy, false)?;
-            self.spawn_object(Vec2::new(screen_w * 0.5 + i as f32 * 40.0, 150.0), ShapeType::Box, MaterialType::Normal, false)?;
-            self.spawn_object(Vec2::new(screen_w * 0.8 + i as f32 * 40.0, 200.0), ShapeType::Box, MaterialType::Slippery, false)?;
+            self.spawn_object(
+                Vec2::new(screen_w * 0.2 + i as f32 * 40.0, 100.0),
+                ShapeType::Box,
+                MaterialType::Bouncy,
+                false,
+            )?;
+            self.spawn_object(
+                Vec2::new(screen_w * 0.5 + i as f32 * 40.0, 150.0),
+                ShapeType::Box,
+                MaterialType::Normal,
+                false,
+            )?;
+            self.spawn_object(
+                Vec2::new(screen_w * 0.8 + i as f32 * 40.0, 200.0),
+                ShapeType::Box,
+                MaterialType::Slippery,
+                false,
+            )?;
         }
 
         for i in 0..2 {
-            self.spawn_object(Vec2::new(screen_w * 0.3 + i as f32 * 60.0, 250.0), ShapeType::Circle, MaterialType::Normal, false)?;
-            self.spawn_object(Vec2::new(screen_w * 0.6 + i as f32 * 60.0, 300.0), ShapeType::Capsule, MaterialType::Bouncy, false)?;
+            self.spawn_object(
+                Vec2::new(screen_w * 0.3 + i as f32 * 60.0, 250.0),
+                ShapeType::Circle,
+                MaterialType::Normal,
+                false,
+            )?;
+            self.spawn_object(
+                Vec2::new(screen_w * 0.6 + i as f32 * 60.0, 300.0),
+                ShapeType::Capsule,
+                MaterialType::Bouncy,
+                false,
+            )?;
         }
 
         Ok(())
@@ -300,11 +341,12 @@ impl Game for PhysicsDemo {
         while ctx.should_run_fixed_update() {
             let dt = ctx.fixed_delta_time().as_secs_f32();
             self.physics.step(dt);
-            
+
             // Intensive debugging for selected entity
             if let Some(debug_entity) = self.debug_entity {
                 self.debug_frame_count += 1;
-                if self.debug_frame_count % 10 == 0 {  // Print every 10 frames
+                if self.debug_frame_count % 10 == 0 {
+                    // Print every 10 frames
                     if let Some(pos) = self.physics.body_position(debug_entity) {
                         if let Some(vel) = self.physics.linear_velocity(debug_entity) {
                             if let Some(ground) = self.ground_entity {
@@ -312,16 +354,26 @@ impl Game for PhysicsDemo {
                                     let dist_to_ground = pos.y - ground_pos.y;
                                     let colliders = self.physics.get_colliders(debug_entity);
                                     let ground_colliders = self.physics.get_colliders(ground);
-                                    
-                                    println!("[Frame {}] Entity {:?}: pos={:?}, vel={:?}, dist_to_ground={:.2}, colliders={}, ground_colliders={}", 
-                                        self.debug_frame_count, debug_entity, pos, vel, dist_to_ground, 
-                                        colliders.len(), ground_colliders.len());
-                                    
+
+                                    println!(
+                                        "[Frame {}] Entity {:?}: pos={:?}, vel={:?}, dist_to_ground={:.2}, colliders={}, ground_colliders={}",
+                                        self.debug_frame_count,
+                                        debug_entity,
+                                        pos,
+                                        vel,
+                                        dist_to_ground,
+                                        colliders.len(),
+                                        ground_colliders.len(),
+                                    );
+
                                     // Check if we're very close to ground but not colliding
-                                    if dist_to_ground < 50.0 && dist_to_ground > -10.0 && vel.y > 0.0 {
+                                    if dist_to_ground < 50.0
+                                        && dist_to_ground > -10.0
+                                        && vel.y > 0.0
+                                    {
                                         eprintln!("  ⚠️  WARNING: Falling through ground! dist={:.2}, vel_y={:.2}", dist_to_ground, vel.y);
                                     }
-                                    
+
                                     // Check if we should have collided but didn't
                                     if dist_to_ground < 20.0 && vel.y > 100.0 {
                                         eprintln!("  ⚠️  WARNING: Fast fall near ground but no collision detected!");
@@ -376,15 +428,20 @@ impl Game for PhysicsDemo {
                 // Filter out static entities from saved scene
                 let ground_entity = self.ground_entity;
                 let sensor_entity = self.sensor_entity;
-                scene.physics.bodies.retain(|b| {
-                    Some(b.entity) != ground_entity && Some(b.entity) != sensor_entity
-                });
-                scene.physics.colliders.retain(|c| {
-                    Some(c.entity) != ground_entity && Some(c.entity) != sensor_entity
-                });
-                
+                scene
+                    .physics
+                    .bodies
+                    .retain(|b| Some(b.entity) != ground_entity && Some(b.entity) != sensor_entity);
+                scene
+                    .physics
+                    .colliders
+                    .retain(|c| Some(c.entity) != ground_entity && Some(c.entity) != sensor_entity);
+
                 match scene.save_to_file(std::path::Path::new("physics_scene.json")) {
-                    Ok(_) => println!("Scene saved to physics_scene.json ({} entities)", scene.physics.bodies.len()),
+                    Ok(_) => println!(
+                        "Scene saved to physics_scene.json ({} entities)",
+                        scene.physics.bodies.len()
+                    ),
                     Err(e) => eprintln!("Failed to save scene: {}", e),
                 }
             }
@@ -396,10 +453,10 @@ impl Game for PhysicsDemo {
                         let screen_size = ctx.window().inner_size();
                         let screen_w = screen_size.width as f32;
                         let screen_h = screen_size.height as f32;
-                        
+
                         // Save gravity before clearing
                         let saved_gravity = self.physics.gravity();
-                        
+
                         // Clear ALL entities from World
                         let all_entities: Vec<_> = self.entities.iter().map(|e| e.entity).collect();
                         for entity in &all_entities {
@@ -412,30 +469,34 @@ impl Game for PhysicsDemo {
                             self.world.despawn(sensor);
                         }
                         self.entities.clear();
-                        
+
                         // Completely clear and rebuild physics world (this is the key fix!)
                         self.physics.clear();
                         self.physics.set_gravity(saved_gravity);
 
                         // Create new World entities and remap scene data
-                        let mut id_mapping: std::collections::HashMap<forge2d::EntityId, forge2d::EntityId> = std::collections::HashMap::new();
+                        let mut id_mapping: std::collections::HashMap<
+                            forge2d::EntityId,
+                            forge2d::EntityId,
+                        > = std::collections::HashMap::new();
                         let mut remapped_scene = scene.clone();
-                        
+
                         // Collect all unique entity IDs
-                        let mut all_entity_ids: std::collections::HashSet<forge2d::EntityId> = std::collections::HashSet::new();
+                        let mut all_entity_ids: std::collections::HashSet<forge2d::EntityId> =
+                            std::collections::HashSet::new();
                         for body in &remapped_scene.physics.bodies {
                             all_entity_ids.insert(body.entity);
                         }
                         for collider in &remapped_scene.physics.colliders {
                             all_entity_ids.insert(collider.entity);
                         }
-                        
+
                         // Create new World entities
                         for old_entity in &all_entity_ids {
                             let new_entity = self.world.spawn();
                             id_mapping.insert(*old_entity, new_entity);
                         }
-                        
+
                         // Remap scene data
                         for body in &mut remapped_scene.physics.bodies {
                             if let Some(&new_entity) = id_mapping.get(&body.entity) {
@@ -454,7 +515,7 @@ impl Game for PhysicsDemo {
                         } else {
                             // CRITICAL: Recreate ground and sensor AFTER restore_scene_physics
                             // (restore_scene_physics clears all bodies, so we must recreate them after)
-                            
+
                             // Recreate ground
                             let ground_entity = self.world.spawn();
                             self.ground_entity = Some(ground_entity);
@@ -468,7 +529,10 @@ impl Game for PhysicsDemo {
                                 eprintln!("Failed to recreate ground: {}", e);
                             } else if let Err(e) = self.physics.add_collider_with_material(
                                 ground_entity,
-                                ColliderShape::Box { hx: 300.0, hy: 15.0 },
+                                ColliderShape::Box {
+                                    hx: 300.0,
+                                    hy: 15.0,
+                                },
                                 Vec2::ZERO,
                                 0.0,
                                 0.7,
@@ -476,7 +540,7 @@ impl Game for PhysicsDemo {
                             ) {
                                 eprintln!("Failed to recreate ground collider: {}", e);
                             }
-                            
+
                             // Recreate sensor
                             let sensor_entity = self.world.spawn();
                             self.sensor_entity = Some(sensor_entity);
@@ -500,7 +564,7 @@ impl Game for PhysicsDemo {
                                 material: MaterialType::Normal,
                                 is_sensor: true,
                             });
-                            
+
                             // Debug: Check physics state after full restore
                             println!("=== Physics State After Full Restore ===");
                             let body_count = self.physics.all_entities_with_bodies().len();
@@ -508,54 +572,97 @@ impl Game for PhysicsDemo {
                             for entity in self.physics.all_entities_with_bodies() {
                                 total_colliders += self.physics.get_colliders(entity).len();
                             }
-                            println!("Total bodies: {}, Total colliders: {}", body_count, total_colliders);
-                            
+                            println!(
+                                "Total bodies: {}, Total colliders: {}",
+                                body_count, total_colliders
+                            );
+
                             // Check ground
                             if let Some(ground) = self.ground_entity {
                                 let ground_colliders = self.physics.get_colliders(ground);
-                                println!("Ground entity {:?}: {} colliders", ground, ground_colliders.len());
-                                for (_shape, _offset, _density, _friction, _restitution, is_sensor) in &ground_colliders {
+                                println!(
+                                    "Ground entity {:?}: {} colliders",
+                                    ground,
+                                    ground_colliders.len()
+                                );
+                                for (
+                                    _shape,
+                                    _offset,
+                                    _density,
+                                    _friction,
+                                    _restitution,
+                                    is_sensor,
+                                ) in &ground_colliders
+                                {
                                     if *is_sensor {
                                         eprintln!("ERROR: Ground collider is a SENSOR!");
                                     }
                                 }
                             }
-                            
+
                             // Check sensor
                             if let Some(sensor) = self.sensor_entity {
                                 let sensor_colliders = self.physics.get_colliders(sensor);
-                                println!("Sensor entity {:?}: {} colliders", sensor, sensor_colliders.len());
+                                println!(
+                                    "Sensor entity {:?}: {} colliders",
+                                    sensor,
+                                    sensor_colliders.len()
+                                );
                             }
                             println!("=== End Physics State Check ===");
                             // Debug: Check body types and compare to spawn behavior
                             println!("=== Body Type Check After Restore ===");
                             for body_data in &remapped_scene.physics.bodies {
-                                if let Some(actual_type) = self.physics.body_type(body_data.entity) {
-                                    println!("Entity {:?}: saved={:?}, actual={:?}, pos={:?}, rot={:?}", 
-                                        body_data.entity, body_data.body_type, actual_type, 
-                                        body_data.position, body_data.rotation);
+                                if let Some(actual_type) = self.physics.body_type(body_data.entity)
+                                {
+                                    println!(
+                                        "Entity {:?}: saved={:?}, actual={:?}, pos={:?}, rot={:?}",
+                                        body_data.entity,
+                                        body_data.body_type,
+                                        actual_type,
+                                        body_data.position,
+                                        body_data.rotation
+                                    );
                                     if body_data.body_type != actual_type {
-                                        eprintln!("ERROR: Body type mismatch! Saved {:?} but got {:?}", 
-                                            body_data.body_type, actual_type);
+                                        eprintln!(
+                                            "ERROR: Body type mismatch! Saved {:?} but got {:?}",
+                                            body_data.body_type, actual_type
+                                        );
                                     }
-                                    
+
                                     // Check collider properties
                                     let colliders = self.physics.get_colliders(body_data.entity);
-                                    for (shape, _offset, density, friction, restitution, is_sensor) in &colliders {
+                                    for (
+                                        shape,
+                                        _offset,
+                                        density,
+                                        friction,
+                                        restitution,
+                                        is_sensor,
+                                    ) in &colliders
+                                    {
                                         println!("  Collider: shape={:?}, sensor={}, density={}, friction={}, restitution={}", 
                                             shape, is_sensor, density, friction, restitution);
                                     }
                                 } else {
-                                    eprintln!("ERROR: Could not get body type for entity {:?}", body_data.entity);
+                                    eprintln!(
+                                        "ERROR: Could not get body type for entity {:?}",
+                                        body_data.entity
+                                    );
                                 }
                             }
                             println!("=== End Body Type Check ===");
-                            
+
                             // Spawn a test object to compare (but don't keep it - just for debugging)
                             println!("=== Spawning Test Object for Comparison ===");
                             let test_pos = Vec2::new(screen_w / 2.0, 100.0);
                             let test_entity = self.world.spawn();
-                            if let Err(e) = self.physics.create_body(test_entity, RigidBodyType::Dynamic, test_pos, 0.0) {
+                            if let Err(e) = self.physics.create_body(
+                                test_entity,
+                                RigidBodyType::Dynamic,
+                                test_pos,
+                                0.0,
+                            ) {
                                 eprintln!("Failed to create test body: {}", e);
                             } else if let Err(e) = self.physics.add_collider_with_material(
                                 test_entity,
@@ -569,22 +676,26 @@ impl Game for PhysicsDemo {
                             } else {
                                 self.physics.set_linear_damping(test_entity, 0.1);
                                 self.physics.set_angular_damping(test_entity, 0.2);
-                                
+
                                 let test_colliders = self.physics.get_colliders(test_entity);
                                 println!("Test object entity {:?}:", test_entity);
-                                for (shape, _offset, density, friction, restitution, is_sensor) in &test_colliders {
+                                for (shape, _offset, density, friction, restitution, is_sensor) in
+                                    &test_colliders
+                                {
                                     println!("  Collider: shape={:?}, sensor={}, density={}, friction={}, restitution={}", 
                                         shape, is_sensor, density, friction, restitution);
                                 }
-                                
+
                                 // Remove test object immediately (it was just for comparison)
                                 self.physics.remove_body(test_entity);
                                 self.world.despawn(test_entity);
                             }
                             println!("=== End Test Object Check ===");
-                            
+
                             // Pick one object near center for intensive debugging
-                            let debug_entity = remapped_scene.physics.bodies
+                            let debug_entity = remapped_scene
+                                .physics
+                                .bodies
                                 .iter()
                                 .find(|b| {
                                     // Find an object near center (x around 640, y should be above ground ~640)
@@ -593,10 +704,10 @@ impl Game for PhysicsDemo {
                                     dist_from_center < 200.0 && b.position.y < 500.0
                                 })
                                 .map(|b| b.entity);
-                            
+
                             if let Some(debug_entity) = debug_entity {
                                 println!("\n=== INTENSIVE DEBUG FOR ENTITY {:?} ===", debug_entity);
-                                
+
                                 // Initial state
                                 if let Some(pos) = self.physics.body_position(debug_entity) {
                                     println!("Initial position: {:?}", pos);
@@ -610,42 +721,64 @@ impl Game for PhysicsDemo {
                                 if let Some(ang_vel) = self.physics.angular_velocity(debug_entity) {
                                     println!("Initial angular velocity: {}", ang_vel);
                                 }
-                                
+
                                 let colliders = self.physics.get_colliders(debug_entity);
                                 println!("Collider count: {}", colliders.len());
-                                for (i, (shape, offset, density, friction, restitution, is_sensor)) in colliders.iter().enumerate() {
+                                for (
+                                    i,
+                                    (shape, offset, density, friction, restitution, is_sensor),
+                                ) in colliders.iter().enumerate()
+                                {
                                     println!("  Collider {}: shape={:?}, offset={:?}, density={}, friction={}, restitution={}, sensor={}", 
                                         i, shape, offset, density, friction, restitution, is_sensor);
                                 }
-                                
+
                                 // Ground info
                                 if let Some(ground) = self.ground_entity {
                                     if let Some(ground_pos) = self.physics.body_position(ground) {
                                         println!("Ground position: {:?}", ground_pos);
-                                        if let Some(debug_pos) = self.physics.body_position(debug_entity) {
+                                        if let Some(debug_pos) =
+                                            self.physics.body_position(debug_entity)
+                                        {
                                             let dist = (debug_pos.y - ground_pos.y).abs();
                                             println!("Distance from ground: {}", dist);
                                         }
-                                        
+
                                         let ground_colliders = self.physics.get_colliders(ground);
-                                        println!("Ground collider count: {}", ground_colliders.len());
-                                        for (i, (shape, offset, density, friction, restitution, is_sensor)) in ground_colliders.iter().enumerate() {
+                                        println!(
+                                            "Ground collider count: {}",
+                                            ground_colliders.len()
+                                        );
+                                        for (
+                                            i,
+                                            (
+                                                shape,
+                                                offset,
+                                                density,
+                                                friction,
+                                                restitution,
+                                                is_sensor,
+                                            ),
+                                        ) in ground_colliders.iter().enumerate()
+                                        {
                                             println!("  Ground collider {}: shape={:?}, offset={:?}, density={}, friction={}, restitution={}, sensor={}", 
                                                 i, shape, offset, density, friction, restitution, is_sensor);
                                         }
                                     }
                                 }
-                                
+
                                 // Store debug entity for tracking
                                 self.debug_entity = Some(debug_entity);
                                 println!("=== END INITIAL DEBUG ===\n");
                             }
-                            
+
                             // Recreate entity tracking from colliders (they have shape info)
                             // Build a map of entity -> collider info
-                            let mut entity_colliders: std::collections::HashMap<_, _> = std::collections::HashMap::new();
+                            let mut entity_colliders: std::collections::HashMap<_, _> =
+                                std::collections::HashMap::new();
                             for collider in &remapped_scene.physics.colliders {
-                                entity_colliders.entry(collider.entity)
+                                entity_colliders
+                                    .entry(collider.entity)
                                     .or_insert_with(Vec::new)
                                     .push(collider);
                             }
@@ -655,12 +788,15 @@ impl Game for PhysicsDemo {
                             let current_sensor = self.sensor_entity;
                             for body in &remapped_scene.physics.bodies {
                                 // Skip static entities - they're already tracked
-                                if Some(body.entity) == current_ground || Some(body.entity) == current_sensor {
+                                if Some(body.entity) == current_ground
+                                    || Some(body.entity) == current_sensor
+                                {
                                     continue;
                                 }
 
                                 // Infer shape from collider
-                                let shape = entity_colliders.get(&body.entity)
+                                let shape = entity_colliders
+                                    .get(&body.entity)
                                     .and_then(|colliders| colliders.first())
                                     .map(|c| match c.shape {
                                         ColliderShape::Box { .. } => ShapeType::Box,
@@ -670,7 +806,8 @@ impl Game for PhysicsDemo {
                                     .unwrap_or(ShapeType::Box);
 
                                 // Infer material from friction/restitution
-                                let material = entity_colliders.get(&body.entity)
+                                let material = entity_colliders
+                                    .get(&body.entity)
                                     .and_then(|colliders| colliders.first())
                                     .map(|c| {
                                         if c.restitution > 0.5 {
@@ -683,7 +820,8 @@ impl Game for PhysicsDemo {
                                     })
                                     .unwrap_or(MaterialType::Normal);
 
-                                let is_sensor = entity_colliders.get(&body.entity)
+                                let is_sensor = entity_colliders
+                                    .get(&body.entity)
                                     .and_then(|colliders| colliders.first())
                                     .map(|c| c.is_sensor)
                                     .unwrap_or(false);
@@ -695,30 +833,38 @@ impl Game for PhysicsDemo {
                                     is_sensor,
                                 });
                             }
-                            println!("Scene loaded from physics_scene.json ({} entities)", self.entities.len());
-                            
+                            println!(
+                                "Scene loaded from physics_scene.json ({} entities)",
+                                self.entities.len()
+                            );
+
                             // Debug: Check for duplicate entities or entities without visuals
                             let mut entity_set = std::collections::HashSet::new();
                             for e in &self.entities {
                                 if entity_set.contains(&e.entity) {
-                                    eprintln!("WARNING: Duplicate entity {:?} in entities list!", e.entity);
+                                    eprintln!(
+                                        "WARNING: Duplicate entity {:?} in entities list!",
+                                        e.entity
+                                    );
                                 }
                                 entity_set.insert(e.entity);
-                                
+
                                 // Check if entity has physics body
                                 if self.physics.body_position(e.entity).is_none() {
                                     eprintln!("WARNING: Entity {:?} in entities list has no physics body!", e.entity);
                                 }
                             }
-                            
+
                             // Check if all physics bodies have corresponding entities
                             // (exclude ground and sensor - they're handled separately)
                             for entity in self.physics.all_entities_with_bodies() {
                                 // Ground and sensor are rendered separately, not through entities list
-                                if Some(entity) == self.ground_entity || Some(entity) == self.sensor_entity {
+                                if Some(entity) == self.ground_entity
+                                    || Some(entity) == self.sensor_entity
+                                {
                                     continue;
                                 }
-                                
+
                                 if !entity_set.contains(&entity) {
                                     eprintln!("WARNING: Physics body for entity {:?} has no corresponding entity in entities list!", entity);
                                     if let Some(pos) = self.physics.body_position(entity) {
@@ -736,12 +882,20 @@ impl Game for PhysicsDemo {
         // WASD forces
         let input = ctx.input();
         let force_dir = Vec2::new(
-            if input.is_key_down(forge2d::VirtualKeyCode::D) { 1.0 }
-            else if input.is_key_down(forge2d::VirtualKeyCode::A) { -1.0 }
-            else { 0.0 },
-            if input.is_key_down(forge2d::VirtualKeyCode::S) { 1.0 }
-            else if input.is_key_down(forge2d::VirtualKeyCode::W) { -1.0 }
-            else { 0.0 },
+            if input.is_key_down(forge2d::VirtualKeyCode::D) {
+                1.0
+            } else if input.is_key_down(forge2d::VirtualKeyCode::A) {
+                -1.0
+            } else {
+                0.0
+            },
+            if input.is_key_down(forge2d::VirtualKeyCode::S) {
+                1.0
+            } else if input.is_key_down(forge2d::VirtualKeyCode::W) {
+                -1.0
+            } else {
+                0.0
+            },
         );
 
         if force_dir.length() > 0.0 {

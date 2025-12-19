@@ -1,10 +1,13 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use forge2d::{World, CommandHistory, ComponentMetadataRegistry, register_builtin_metadata, Command, create_scene, restore_scene_physics, PhysicsWorld};
+use forge2d::{
+    create_scene, register_builtin_metadata, restore_scene_physics, Command, CommandHistory,
+    ComponentMetadataRegistry, PhysicsWorld, World,
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Project configuration
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -24,7 +27,14 @@ struct EditorState {
     scene_dirty: bool,
     is_playing: bool,
     play_snapshot: Option<forge2d::Scene>, // Snapshot taken before play mode
-    play_snapshot_entities: Option<Vec<(forge2d::EntityId, forge2d::entities::Transform, Option<forge2d::entities::SpriteComponent>, Option<forge2d::entities::PhysicsBody>)>>, // Snapshot of entities and components
+    play_snapshot_entities: Option<
+        Vec<(
+            forge2d::EntityId,
+            forge2d::entities::Transform,
+            Option<forge2d::entities::SpriteComponent>,
+            Option<forge2d::entities::PhysicsBody>,
+        )>,
+    >, // Snapshot of entities and components
     play_snapshot_texture_paths: Option<std::collections::HashMap<u32, String>>, // Snapshot of texture paths
     // Texture registry: maps entity ID -> texture file path (for sprites)
     entity_texture_paths: std::collections::HashMap<u32, String>,
@@ -37,7 +47,7 @@ impl EditorState {
     fn new() -> Self {
         let mut registry = ComponentMetadataRegistry::new();
         register_builtin_metadata(&mut registry);
-        
+
         Self {
             world: World::new(),
             physics: PhysicsWorld::new(),
@@ -92,22 +102,88 @@ struct EntityInfo {
     children: Vec<u32>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct FileNode {
+    name: String,
+    path: String,
+    is_dir: bool,
+    children: Vec<FileNode>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ProjectFileTree {
+    scenes: FileNode,
+    assets: FileNode,
+}
+
+fn build_file_tree(path: &Path, depth: usize) -> Result<FileNode, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|e| format!("Failed to read metadata for {}: {}", path.display(), e))?;
+    let is_dir = metadata.is_dir();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+
+    let mut node = FileNode {
+        name,
+        path: path.to_string_lossy().to_string(),
+        is_dir,
+        children: Vec::new(),
+    };
+
+    if is_dir && depth > 0 {
+        let mut entries: Vec<PathBuf> = fs::read_dir(path)
+            .map_err(|e| format!("Failed to read directory {}: {}", path.display(), e))?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|p| {
+                !p.file_name()
+                    .map(|n| n.to_string_lossy().starts_with('.'))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        entries.sort_by(|a, b| {
+            let a_dir = a.is_dir();
+            let b_dir = b.is_dir();
+            match (a_dir, b_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.file_name().cmp(&b.file_name()),
+            }
+        });
+
+        for entry_path in entries {
+            let child = build_file_tree(&entry_path, depth - 1)?;
+            node.children.push(child);
+        }
+    }
+
+    Ok(node)
+}
+
 #[tauri::command]
 fn entities_list() -> Vec<EntityInfo> {
     let state = get_state();
     let mut entities = Vec::new();
-    
+
     for (entity_id, transform) in state.world.query::<forge2d::entities::Transform>() {
         let id = entity_id.to_u32();
         let has_transform = true;
-        let has_sprite = state.world.get::<forge2d::entities::SpriteComponent>(entity_id).is_some();
-        let has_physics = state.world.get::<forge2d::entities::PhysicsBody>(entity_id).is_some();
+        let has_sprite = state
+            .world
+            .get::<forge2d::entities::SpriteComponent>(entity_id)
+            .is_some();
+        let has_physics = state
+            .world
+            .get::<forge2d::entities::PhysicsBody>(entity_id)
+            .is_some();
         let parent_id = transform.parent.map(|e| e.to_u32());
         let children = forge2d::hierarchy::get_children(&state.world, entity_id)
             .iter()
             .map(|e| e.to_u32())
             .collect();
-        
+
         entities.push(EntityInfo {
             id,
             has_transform,
@@ -117,7 +193,7 @@ fn entities_list() -> Vec<EntityInfo> {
             children,
         });
     }
-    
+
     entities
 }
 
@@ -127,14 +203,16 @@ fn entity_delete(entity_id: u32) -> Result<(), String> {
     if state.is_playing {
         return Err("Cannot delete entities in play mode".to_string());
     }
-    
-    let entity = find_entity_by_id(state, entity_id)
-        .ok_or_else(|| "Entity not found".to_string())?;
-    
+
+    let entity =
+        find_entity_by_id(state, entity_id).ok_or_else(|| "Entity not found".to_string())?;
+
     let cmd = forge2d::DeleteEntity::new(entity);
-    state.command_history.execute(Box::new(cmd), &mut state.world)
+    state
+        .command_history
+        .execute(Box::new(cmd), &mut state.world)
         .map_err(|e| e.to_string())?;
-    
+
     state.scene_dirty = true;
     Ok(())
 }
@@ -142,39 +220,51 @@ fn entity_delete(entity_id: u32) -> Result<(), String> {
 #[tauri::command]
 fn entity_duplicate(entity_id: u32) -> Result<u32, String> {
     let state = get_state();
-    let source_entity = find_entity_by_id(state, entity_id)
-        .ok_or_else(|| "Entity not found".to_string())?;
-    
+    let source_entity =
+        find_entity_by_id(state, entity_id).ok_or_else(|| "Entity not found".to_string())?;
+
     // Create new entity
     let mut cmd = Box::new(forge2d::CreateEntity::new());
     cmd.execute(&mut state.world)
         .map_err(|e| format!("Failed to create entity: {}", e))?;
-    let new_entity_id = cmd.entity()
+    let new_entity_id = cmd
+        .entity()
         .ok_or_else(|| "Entity ID not available after creation".to_string())?;
-    
+
     // Copy Transform component if it exists
-    if let Some(transform) = state.world.get::<forge2d::entities::Transform>(source_entity) {
+    if let Some(transform) = state
+        .world
+        .get::<forge2d::entities::Transform>(source_entity)
+    {
         let mut new_transform = transform.clone();
         // Offset position slightly so it's visible
         new_transform.position.x += 50.0;
         new_transform.position.y += 50.0;
         state.world.insert(new_entity_id, new_transform);
     }
-    
+
     // Copy SpriteComponent if it exists
-    if let Some(sprite) = state.world.get::<forge2d::entities::SpriteComponent>(source_entity) {
+    if let Some(sprite) = state
+        .world
+        .get::<forge2d::entities::SpriteComponent>(source_entity)
+    {
         state.world.insert(new_entity_id, sprite.clone());
     }
-    
+
     // Copy PhysicsBody if it exists
-    if let Some(physics) = state.world.get::<forge2d::entities::PhysicsBody>(source_entity) {
+    if let Some(physics) = state
+        .world
+        .get::<forge2d::entities::PhysicsBody>(source_entity)
+    {
         state.world.insert(new_entity_id, *physics);
     }
-    
+
     // Add command to history
-    state.command_history.execute(cmd, &mut state.world)
+    state
+        .command_history
+        .execute(cmd, &mut state.world)
         .map_err(|e| format!("Failed to add command to history: {}", e))?;
-    
+
     state.scene_dirty = true;
     Ok(new_entity_id.to_u32())
 }
@@ -186,26 +276,32 @@ fn entity_create() -> Result<u32, String> {
         return Err("Cannot create entities in play mode".to_string());
     }
     let state = get_state();
-    
+
     // Create entity via command
     let mut cmd = Box::new(forge2d::CreateEntity::new());
-    
+
     // Execute the command first to get the entity ID
     cmd.execute(&mut state.world)
         .map_err(|e| format!("Failed to create entity: {}", e))?;
-    
-    let entity_id = cmd.entity()
+
+    let entity_id = cmd
+        .entity()
         .ok_or_else(|| "Entity ID not available after creation".to_string())?;
-    
+
     // Add a Transform component so the entity shows up in the list
     // This should also be done via command, but for now we'll do it directly
-    state.world.insert(entity_id, forge2d::entities::Transform::new(forge2d::Vec2::ZERO));
-    
+    state.world.insert(
+        entity_id,
+        forge2d::entities::Transform::new(forge2d::Vec2::ZERO),
+    );
+
     // Now add the command to history (it's already executed, so this won't execute again)
     // Actually, the history will execute it again, but CreateEntity is idempotent
-    state.command_history.execute(cmd, &mut state.world)
+    state
+        .command_history
+        .execute(cmd, &mut state.world)
         .map_err(|e| format!("Failed to add command to history: {}", e))?;
-    
+
     state.scene_dirty = true;
     Ok(entity_id.to_u32())
 }
@@ -213,14 +309,18 @@ fn entity_create() -> Result<u32, String> {
 #[tauri::command]
 fn undo() -> Result<(), String> {
     let state = get_state();
-    state.command_history.undo(&mut state.world)
+    state
+        .command_history
+        .undo(&mut state.world)
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn redo() -> Result<(), String> {
     let state = get_state();
-    state.command_history.redo(&mut state.world)
+    state
+        .command_history
+        .redo(&mut state.world)
         .map_err(|e| e.to_string())
 }
 
@@ -293,7 +393,7 @@ fn transform_get(entity_id: u32) -> Option<TransformData> {
 #[derive(Serialize, Deserialize)]
 struct SpriteData {
     texture_handle: u32,
-    texture_path: Option<String>, // Path to texture file
+    texture_path: Option<String>,   // Path to texture file
     texture_size: Option<[u32; 2]>, // Width, height
     tint: [f32; 4],
     sprite_scale: [f32; 2], // Scale from sprite.transform
@@ -303,17 +403,22 @@ struct SpriteData {
 fn sprite_get(entity_id: u32) -> Option<SpriteData> {
     let state = get_state();
     let entity = find_entity_by_id(state, entity_id)?;
-    let sprite_comp = state.world.get::<forge2d::entities::SpriteComponent>(entity)?;
-    
+    let sprite_comp = state
+        .world
+        .get::<forge2d::entities::SpriteComponent>(entity)?;
+
     // Get texture path for this entity
     let texture_path = state.entity_texture_paths.get(&entity_id).cloned();
-    
+
     Some(SpriteData {
         texture_handle: 0, // Not used in editor
         texture_path,
         texture_size: None, // Will be determined from loaded image
         tint: sprite_comp.sprite.tint,
-        sprite_scale: [sprite_comp.sprite.transform.scale.x, sprite_comp.sprite.transform.scale.y],
+        sprite_scale: [
+            sprite_comp.sprite.transform.scale.x,
+            sprite_comp.sprite.transform.scale.y,
+        ],
     })
 }
 
@@ -321,40 +426,57 @@ fn sprite_get(entity_id: u32) -> Option<SpriteData> {
 #[tauri::command]
 fn sprite_set_texture_path(entity_id: u32, path: String) -> Result<(), String> {
     let state = get_state();
-    let entity = find_entity_by_id(state, entity_id)
-        .ok_or_else(|| "Entity not found".to_string())?;
-    
+    let entity =
+        find_entity_by_id(state, entity_id).ok_or_else(|| "Entity not found".to_string())?;
+
     // Verify entity has SpriteComponent
-    if state.world.get::<forge2d::entities::SpriteComponent>(entity).is_none() {
+    if state
+        .world
+        .get::<forge2d::entities::SpriteComponent>(entity)
+        .is_none()
+    {
         return Err("Entity does not have SpriteComponent".to_string());
     }
-    
+
     state.entity_texture_paths.insert(entity_id, path);
     state.scene_dirty = true;
     Ok(())
 }
 
 #[tauri::command]
-fn transform_set(entity_id: u32, position: [f32; 2], rotation: f32, scale: [f32; 2]) -> Result<(), String> {
-    println!("Received transform_set: entity_id={}, position=[{}, {}], rotation={}, scale=[{}, {}]", 
-             entity_id, position[0], position[1], rotation, scale[0], scale[1]);
+fn transform_set(
+    entity_id: u32,
+    position: [f32; 2],
+    rotation: f32,
+    scale: [f32; 2],
+) -> Result<(), String> {
+    println!(
+        "Received transform_set: entity_id={}, position=[{}, {}], rotation={}, scale=[{}, {}]",
+        entity_id, position[0], position[1], rotation, scale[0], scale[1]
+    );
     let state = get_state();
-    let entity = find_entity_by_id(state, entity_id)
-        .ok_or_else(|| "Entity not found".to_string())?;
-    
+    let entity =
+        find_entity_by_id(state, entity_id).ok_or_else(|| "Entity not found".to_string())?;
+
     let cmd = forge2d::SetTransform::new(
         entity,
         forge2d::Vec2::new(position[0], position[1]),
         rotation,
         forge2d::Vec2::new(scale[0], scale[1]),
     );
-    
-    state.command_history.execute(Box::new(cmd), &mut state.world)
+
+    state
+        .command_history
+        .execute(Box::new(cmd), &mut state.world)
         .map_err(|e| e.to_string())?;
-    
+
     // Update physics body if it exists (only in edit mode)
     if !state.is_playing {
-        if state.world.get::<forge2d::entities::PhysicsBody>(entity).is_some() {
+        if state
+            .world
+            .get::<forge2d::entities::PhysicsBody>(entity)
+            .is_some()
+        {
             // Get the updated transform
             if let Some(transform) = state.world.get::<forge2d::entities::Transform>(entity) {
                 state.physics.set_body_position(entity, transform.position);
@@ -362,7 +484,7 @@ fn transform_set(entity_id: u32, position: [f32; 2], rotation: f32, scale: [f32;
             }
         }
     }
-    
+
     state.scene_dirty = true;
     Ok(())
 }
@@ -381,29 +503,43 @@ fn component_fields(entity_id: u32, component_type: String) -> Option<Vec<Compon
     let entity = find_entity_by_id(state, entity_id)?;
     let handler = state.metadata_registry.get(&component_type)?;
     let fields = handler.fields();
-    
-    Some(fields.into_iter().map(|field| {
-        let value = handler.get_field(&state.world, entity, &field.name)
-            .unwrap_or(serde_json::Value::Null);
-        
-        ComponentFieldInfo {
-            name: field.name,
-            type_name: field.type_name,
-            value,
-        }
-    }).collect())
+
+    Some(
+        fields
+            .into_iter()
+            .map(|field| {
+                let value = handler
+                    .get_field(&state.world, entity, &field.name)
+                    .unwrap_or(serde_json::Value::Null);
+
+                ComponentFieldInfo {
+                    name: field.name,
+                    type_name: field.type_name,
+                    value,
+                }
+            })
+            .collect(),
+    )
 }
 
 #[tauri::command]
-fn component_set_field(entity_id: u32, component_type: String, field_name: String, value: serde_json::Value) -> Result<(), String> {
+fn component_set_field(
+    entity_id: u32,
+    component_type: String,
+    field_name: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
     let state = get_state();
-    let entity = find_entity_by_id(state, entity_id)
-        .ok_or_else(|| "Entity not found".to_string())?;
-    
-    let handler = state.metadata_registry.get(&component_type)
+    let entity =
+        find_entity_by_id(state, entity_id).ok_or_else(|| "Entity not found".to_string())?;
+
+    let handler = state
+        .metadata_registry
+        .get(&component_type)
         .ok_or_else(|| "Component type not found".to_string())?;
-    
-    handler.set_field(&mut state.world, entity, &field_name, value)
+
+    handler
+        .set_field(&mut state.world, entity, &field_name, value)
         .map_err(|e| e.to_string())?;
     state.scene_dirty = true;
     Ok(())
@@ -426,26 +562,26 @@ struct ProjectInfo {
 #[tauri::command]
 fn project_create(name: String) -> Result<(), String> {
     // Get Documents folder path
-    let documents_path = dirs::document_dir()
-        .ok_or_else(|| "Could not find Documents folder".to_string())?;
-    
+    let documents_path =
+        dirs::document_dir().ok_or_else(|| "Could not find Documents folder".to_string())?;
+
     // Create Forge2D projects folder
     let projects_folder = documents_path.join("Forge2D");
     fs::create_dir_all(&projects_folder)
         .map_err(|e| format!("Failed to create Forge2D projects folder: {}", e))?;
-    
+
     // Create project folder: Documents/Forge2D/{name}
     let project_path = projects_folder.join(&name);
-    
+
     // Check if project folder already exists
     if project_path.exists() {
         return Err(format!("Project '{}' already exists", name));
     }
-    
+
     // Create project directory
     fs::create_dir_all(&project_path)
         .map_err(|e| format!("Failed to create project directory: {}", e))?;
-    
+
     // Create subdirectories
     fs::create_dir_all(project_path.join("scenes"))
         .map_err(|e| format!("Failed to create scenes directory: {}", e))?;
@@ -453,20 +589,20 @@ fn project_create(name: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to create assets directory: {}", e))?;
     fs::create_dir_all(project_path.join("assets").join("textures"))
         .map_err(|e| format!("Failed to create textures directory: {}", e))?;
-    
+
     // Create project config
     let config = ProjectConfig {
         name: name.clone(),
         version: "1.0.0".to_string(),
         created_at: chrono::Utc::now().to_rfc3339(),
     };
-    
+
     let config_path = project_path.join("forge2d_project.json");
     let config_json = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize project config: {}", e))?;
     fs::write(&config_path, config_json)
         .map_err(|e| format!("Failed to write project config: {}", e))?;
-    
+
     // Load the project
     project_open(project_path.to_string_lossy().to_string())
 }
@@ -475,12 +611,12 @@ fn project_create(name: String) -> Result<(), String> {
 fn project_open(path: String) -> Result<(), String> {
     let state = get_state();
     let project_path = PathBuf::from(&path);
-    
+
     // Verify project directory exists
     if !project_path.exists() {
         return Err("Project directory does not exist".to_string());
     }
-    
+
     // Load project config
     let config_path = project_path.join("forge2d_project.json");
     let config: ProjectConfig = if config_path.exists() {
@@ -491,7 +627,8 @@ fn project_open(path: String) -> Result<(), String> {
     } else {
         // Create default config for old projects
         ProjectConfig {
-            name: project_path.file_name()
+            name: project_path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("Untitled Project")
                 .to_string(),
@@ -499,13 +636,13 @@ fn project_open(path: String) -> Result<(), String> {
             created_at: chrono::Utc::now().to_rfc3339(),
         }
     };
-    
+
     state.project_path = Some(project_path);
     state.project_config = Some(config);
-    
+
     // Reset scene
     scene_new()?;
-    
+
     Ok(())
 }
 
@@ -513,12 +650,10 @@ fn project_open(path: String) -> Result<(), String> {
 fn project_get_current() -> Option<ProjectInfo> {
     let state = get_state();
     state.project_path.as_ref().and_then(|path| {
-        state.project_config.as_ref().map(|config| {
-            ProjectInfo {
-                name: config.name.clone(),
-                path: path.to_string_lossy().to_string(),
-                version: config.version.clone(),
-            }
+        state.project_config.as_ref().map(|config| ProjectInfo {
+            name: config.name.clone(),
+            path: path.to_string_lossy().to_string(),
+            version: config.version.clone(),
         })
     })
 }
@@ -526,42 +661,69 @@ fn project_get_current() -> Option<ProjectInfo> {
 #[tauri::command]
 fn project_close() -> Result<(), String> {
     let state = get_state();
-    
+
     // Check if scene is dirty
     if state.scene_dirty {
         return Err("Scene has unsaved changes. Save before closing project.".to_string());
     }
-    
+
     state.project_path = None;
     state.project_config = None;
     scene_new()?;
-    
+
     Ok(())
+}
+
+#[tauri::command]
+fn project_files_tree() -> Result<ProjectFileTree, String> {
+    let state = get_state();
+    let project_path = state
+        .project_path
+        .as_ref()
+        .ok_or_else(|| "No project open".to_string())?;
+
+    let scenes_path = project_path.join("scenes");
+    let assets_path = project_path.join("assets");
+
+    if !scenes_path.exists() {
+        fs::create_dir_all(&scenes_path)
+            .map_err(|e| format!("Failed to create scenes folder: {}", e))?;
+    }
+
+    if !assets_path.exists() {
+        fs::create_dir_all(&assets_path)
+            .map_err(|e| format!("Failed to create assets folder: {}", e))?;
+    }
+
+    let scenes = build_file_tree(&scenes_path, 6)?;
+    let assets = build_file_tree(&assets_path, 6)?;
+
+    Ok(ProjectFileTree { scenes, assets })
 }
 
 #[tauri::command]
 fn project_list() -> Result<Vec<ProjectInfo>, String> {
     // Get Documents folder path
-    let documents_path = dirs::document_dir()
-        .ok_or_else(|| "Could not find Documents folder".to_string())?;
-    
+    let documents_path =
+        dirs::document_dir().ok_or_else(|| "Could not find Documents folder".to_string())?;
+
     let projects_folder = documents_path.join("Forge2D");
-    
+
     // Return empty list if folder doesn't exist
     if !projects_folder.exists() {
         return Ok(Vec::new());
     }
-    
+
     let mut projects = Vec::new();
-    
+
     // Read all directories in Forge2D folder
     let entries = fs::read_dir(&projects_folder)
         .map_err(|e| format!("Failed to read projects folder: {}", e))?;
-    
+
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
-        
+
         // Check if it's a directory and has a project config file
         if path.is_dir() {
             let config_path = path.join("forge2d_project.json");
@@ -579,10 +741,10 @@ fn project_list() -> Result<Vec<ProjectInfo>, String> {
             }
         }
     }
-    
+
     // Sort by name
     projects.sort_by(|a, b| a.name.cmp(&b.name));
-    
+
     Ok(projects)
 }
 
@@ -591,13 +753,12 @@ fn project_list() -> Result<Vec<ProjectInfo>, String> {
 fn scene_save(path: Option<String>) -> Result<String, String> {
     let state = get_state();
     let scene = create_scene(&state.physics);
-    
+
     // TODO: Serialize entities and components manually
     // For now, we'll just save physics
-    
-    let json = serde_json::to_string_pretty(&scene)
-        .map_err(|e| e.to_string())?;
-    
+
+    let json = serde_json::to_string_pretty(&scene).map_err(|e| e.to_string())?;
+
     // Determine save path
     let save_path = if let Some(p) = path {
         PathBuf::from(p)
@@ -607,16 +768,14 @@ fn scene_save(path: Option<String>) -> Result<String, String> {
     } else {
         return Err("No project open and no path provided".to_string());
     };
-    
+
     // Ensure directory exists
     if let Some(parent) = save_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
-    
-    fs::write(&save_path, json)
-        .map_err(|e| e.to_string())?;
-    
+
+    fs::write(&save_path, json).map_err(|e| e.to_string())?;
+
     state.scene_dirty = false;
     Ok(save_path.to_string_lossy().to_string())
 }
@@ -624,25 +783,22 @@ fn scene_save(path: Option<String>) -> Result<String, String> {
 #[tauri::command]
 fn scene_load(path: String) -> Result<(), String> {
     let state = get_state();
-    
-    let json = fs::read_to_string(&path)
-        .map_err(|e| e.to_string())?;
-    
-    let scene: forge2d::Scene = serde_json::from_str(&json)
-        .map_err(|e| e.to_string())?;
-    
+
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+
+    let scene: forge2d::Scene = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+
     // Clear world and physics
     state.world = World::new();
-    restore_scene_physics(&mut state.physics, &scene)
-        .map_err(|e| e.to_string())?;
-    
+    restore_scene_physics(&mut state.physics, &scene).map_err(|e| e.to_string())?;
+
     // Clear command history
     state.command_history.clear();
     state.scene_dirty = false;
-    
+
     // TODO: Restore entities and components from scene.entities
     // For now, we'll just restore physics
-    
+
     Ok(())
 }
 
@@ -668,27 +824,33 @@ fn play_start() -> Result<(), String> {
     if state.is_playing {
         return Err("Already in play mode".to_string());
     }
-    
+
     // Take snapshot of current scene (physics)
     let scene = create_scene(&state.physics);
     state.play_snapshot = Some(scene);
-    
+
     // Snapshot all entities and their components
     let mut entity_snapshot = Vec::new();
     for (entity_id, transform) in state.world.query::<forge2d::entities::Transform>() {
         let transform_clone = transform.clone();
-        let sprite_clone = state.world.get::<forge2d::entities::SpriteComponent>(entity_id).cloned();
-        let physics_clone = state.world.get::<forge2d::entities::PhysicsBody>(entity_id).copied();
+        let sprite_clone = state
+            .world
+            .get::<forge2d::entities::SpriteComponent>(entity_id)
+            .cloned();
+        let physics_clone = state
+            .world
+            .get::<forge2d::entities::PhysicsBody>(entity_id)
+            .copied();
         entity_snapshot.push((entity_id, transform_clone, sprite_clone, physics_clone));
     }
     state.play_snapshot_entities = Some(entity_snapshot);
-    
+
     // Store texture paths snapshot
     state.play_snapshot_texture_paths = Some(state.entity_texture_paths.clone());
-    
+
     // Enable physics simulation
     state.is_playing = true;
-    
+
     Ok(())
 }
 
@@ -698,51 +860,51 @@ fn play_stop() -> Result<(), String> {
     if !state.is_playing {
         return Err("Not in play mode".to_string());
     }
-    
+
     // Restore snapshot
     if let Some(snapshot) = state.play_snapshot.take() {
         let entities_snapshot = state.play_snapshot_entities.take();
         let texture_paths_snapshot = state.play_snapshot_texture_paths.take();
-        
+
         // Clear world and physics
         state.world = World::new();
         state.physics = PhysicsWorld::new();
-        
+
         // Restore physics first
         restore_scene_physics(&mut state.physics, &snapshot)
             .map_err(|e| format!("Failed to restore scene physics: {}", e))?;
-        
+
         // Restore entities and components
         // We need to preserve entity IDs for physics world mapping to work correctly
         if let Some(entities) = entities_snapshot {
             for (entity_id, transform, sprite, physics) in entities {
                 // Restore entity with its original ID
                 state.world.restore_entity(entity_id);
-                
+
                 // Insert Transform
                 state.world.insert(entity_id, transform);
-                
+
                 // Insert SpriteComponent if it existed
                 if let Some(sprite_comp) = sprite {
                     state.world.insert(entity_id, sprite_comp);
                 }
-                
+
                 // Insert PhysicsBody if it existed
                 if let Some(physics_comp) = physics {
                     state.world.insert(entity_id, physics_comp);
                 }
             }
         }
-        
+
         // Restore texture paths
         if let Some(texture_paths) = texture_paths_snapshot {
             state.entity_texture_paths = texture_paths;
         }
-        
+
         // Clear command history after restore
         state.command_history.clear();
     }
-    
+
     state.is_playing = false;
     Ok(())
 }
@@ -759,19 +921,24 @@ fn play_step_physics(dt: f32) -> Result<(), String> {
     if !state.is_playing {
         return Err("Not in play mode".to_string());
     }
-    
+
     // Step physics simulation
     state.physics.step(dt);
-    
+
     // Sync physics positions back to Transform components
     // Collect entity IDs first to avoid borrow checker issues
-    let entity_ids: Vec<_> = state.world.query::<forge2d::entities::Transform>()
+    let entity_ids: Vec<_> = state
+        .world
+        .query::<forge2d::entities::Transform>()
         .iter()
         .map(|(eid, _)| *eid)
         .collect();
-    
+
     for entity_id in entity_ids {
-        if let Some(transform) = state.world.get_mut::<forge2d::entities::Transform>(entity_id) {
+        if let Some(transform) = state
+            .world
+            .get_mut::<forge2d::entities::Transform>(entity_id)
+        {
             if let Some(pos) = state.physics.body_position(entity_id) {
                 transform.position = pos;
             }
@@ -780,7 +947,7 @@ fn play_step_physics(dt: f32) -> Result<(), String> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -792,6 +959,7 @@ fn main() {
             project_open,
             project_get_current,
             project_close,
+            project_files_tree,
             project_list,
             entities_list,
             entity_create,
