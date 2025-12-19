@@ -178,6 +178,32 @@ This keeps:
 - **World** responsible for entity/component storage
 - Your **game/state** responsible for systems (movement, AI, etc.)
 
+## Component Serialization
+
+The `World` system integrates with the scene serialization system. Components can be serialized and deserialized for save/load functionality.
+
+See [Scene Serialization](scene.md) for details on saving and loading game state.
+
+### Serializing Components
+
+```rust
+use forge2d::{World, ComponentSerializable, SerializableComponent};
+
+// Components that implement ComponentSerializable can be serialized
+if let Some(component) = world.get::<MyComponent>(entity) {
+    let serialized = component.serialize();
+    // Save to scene...
+}
+```
+
+### Deserializing Components
+
+```rust
+// When loading, deserialize and add components
+let component = MyComponent::deserialize(&data)?;
+world.insert(entity, component);
+```
+
 ## Limitations (by design)
 
 This is intentionally **not** a full ECS:
@@ -185,11 +211,50 @@ This is intentionally **not** a full ECS:
 - No archetypes or advanced layout optimizations
 - No parallel iteration
 - Queries are single-type only (`query::<T>()`)
+- No system scheduling or execution order guarantees
+- Component add/remove during iteration is not explicitly handled (be careful)
 
-It's a stepping stone:
+### Query Ergonomics
 
-- Good enough for many 2D games
-- A clean place to plug in a real ECS later if you outgrow it
+The current query system is simple but has limitations:
+
+```rust
+// Single-type query (works well)
+for (entity, pos) in world.query::<Position>() {
+    // ...
+}
+
+// Multi-component access (requires manual filtering)
+let entities: Vec<(EntityId, Position, Velocity)> = world
+    .query::<Position>()
+    .into_iter()
+    .filter_map(|(e, pos)| {
+        let vel = world.get::<Velocity>(e)?;
+        Some((e, *pos, *vel))
+    })
+    .collect();
+```
+
+**Borrow checker notes:**
+- Queries return owned `Vec` to avoid lifetime issues
+- Mutable access requires `get_mut()` per entity
+- No borrow checker magic—you handle iteration safety
+
+### When to Move to a Full ECS
+
+Consider switching to an ECS crate (like `hecs`, `bevy_ecs`, etc.) if:
+
+- You have thousands of entities and performance becomes an issue
+- You need complex queries (multiple component types, filters)
+- You want parallel system execution
+- You need archetype-based optimizations
+
+Until then, this `World` + `EntityId` layer gives you:
+
+- Centralized entity management
+- Clean separation between data (world) and behavior (systems/game code)
+- A solid foundation for future tools and editors (entity inspectors, hierarchies, etc.)
+- Simple, predictable API without magic
 
 ## When to Move to a Full ECS
 

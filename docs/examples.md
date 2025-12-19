@@ -70,7 +70,7 @@ fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
 }
 ```
 
-### Camera Following
+### Camera Following (Manual)
 
 ```rust
 fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
@@ -86,6 +86,27 @@ fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
     let camera_speed = 5.0;
     let dt = ctx.delta_time().as_secs_f32();
     self.camera.position = self.camera.position.lerp(target_pos, camera_speed * dt);
+    
+    Ok(())
+}
+```
+
+### Camera Following (CameraFollow System)
+
+```rust
+use forge2d::{CameraFollow, update_camera_follow};
+
+fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
+    let dt = ctx.delta_time().as_secs_f32();
+    
+    // Configure camera follow with dead-zone
+    self.camera_follow = CameraFollow::new()
+        .follow_entity(self.player_entity)
+        .with_dead_zone(200.0, 150.0)  // Dead zone size
+        .with_smoothing(0.15);          // Smooth following
+    
+    // Update camera
+    update_camera_follow(&mut self.camera, &self.camera_follow, &self.physics, dt);
     
     Ok(())
 }
@@ -239,9 +260,125 @@ fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
 }
 ```
 
-## Complete Example
+### Grid-Based Movement
 
-See `examples/basic_game/` for a complete working example demonstrating:
+```rust
+use forge2d::{Grid, GridCoord, Vec2};
+
+struct GridGame {
+    grid: Grid<bool>,  // true = walkable
+    player_pos: GridCoord,
+}
+
+impl GridGame {
+    fn move_player(&mut self, direction: Vec2) {
+        let new_coord = GridCoord::new(
+            self.player_pos.x + direction.x as i32,
+            self.player_pos.y + direction.y as i32,
+        );
+        
+        if let Some(&walkable) = self.grid.get(new_coord) {
+            if walkable {
+                self.player_pos = new_coord;
+            }
+        }
+    }
+}
+```
+
+### A* Pathfinding
+
+```rust
+use forge2d::{AStarPathfinder, PathfindingGrid, Vec2};
+
+fn find_path_to_target(
+    grid: &PathfindingGrid,
+    start: Vec2,
+    goal: Vec2,
+) -> Option<Vec<Vec2>> {
+    AStarPathfinder::find_path(grid, start, goal)
+}
+```
+
+### Physics Bodies
+
+```rust
+use forge2d::{PhysicsWorld, RigidBodyType, ColliderShape, Vec2};
+
+fn spawn_physics_object(
+    physics: &mut PhysicsWorld,
+    entity: EntityId,
+    pos: Vec2,
+) -> Result<()> {
+    // Create dynamic body
+    physics.create_body(entity, RigidBodyType::Dynamic, pos, 0.0)?;
+    
+    // Add box collider
+    physics.add_collider_with_material(
+        entity,
+        ColliderShape::Box { hx: 15.0, hy: 15.0 },
+        Vec2::ZERO,
+        1.0,  // density
+        0.5,  // friction
+        0.3,  // restitution
+    )?;
+    
+    Ok(())
+}
+```
+
+### Scene Save/Load
+
+```rust
+use forge2d::{create_scene, restore_scene_physics, Scene};
+
+fn save_game(world: &World, physics: &PhysicsWorld) -> Result<()> {
+    let scene = create_scene(world, physics)?;
+    let json = serde_json::to_string_pretty(&scene)?;
+    std::fs::write("save.json", json)?;
+    Ok(())
+}
+
+fn load_game(physics: &mut PhysicsWorld) -> Result<()> {
+    let json = std::fs::read_to_string("save.json")?;
+    let scene: Scene = serde_json::from_str(&json)?;
+    restore_scene_physics(physics, &scene.physics)?;
+    Ok(())
+}
+```
+
+### HUD Display
+
+```rust
+use forge2d::{HudLayer, HudText};
+
+fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
+    // ... draw game sprites ...
+    
+    // Draw HUD
+    self.hud.clear();
+    if let Some(font) = self.font {
+        self.hud.add_text(HudText {
+            text: format!("Score: {}", self.score),
+            font,
+            size: 20.0,
+            position: Vec2::new(10.0, 10.0),  // Top-left
+            color: [1.0, 1.0, 1.0, 1.0],
+        });
+    }
+    self.hud.draw(renderer, &mut frame)?;
+    
+    Ok(())
+}
+```
+
+## Available Demos
+
+Forge2D includes several complete example demos:
+
+### Basic Game (`examples/basic_game/`)
+
+Complete working example demonstrating:
 - Sprite rendering
 - Input handling
 - Camera following
@@ -249,9 +386,67 @@ See `examples/basic_game/` for a complete working example demonstrating:
 - Text rendering
 - Asset management
 
-Run it with:
-
 ```bash
 cargo run -p basic_game
+```
+
+### Physics Demo (`examples/physics_demo/`)
+
+Physics engine demonstration:
+- Dynamic, kinematic, and fixed bodies
+- Collision detection and events
+- Sensors and triggers
+- Scene save/load functionality
+
+```bash
+cargo run -p physics_demo
+```
+
+### Platformer Demo (`examples/platformer_demo/`)
+
+2D platformer example:
+- Physics-based character controller
+- Jumping mechanics
+- Camera follow with dead-zone
+- Platform navigation
+
+```bash
+cargo run -p platformer_demo
+```
+
+### Pathfinding Demo (`examples/pathfinding_demo/`)
+
+A* pathfinding visualization:
+- Interactive pathfinding
+- Obstacle avoidance
+- Path visualization
+- Agent movement
+
+```bash
+cargo run -p pathfinding_demo
+```
+
+### Grid Demo (`examples/grid_demo/`)
+
+Grid-based movement demo:
+- Discrete grid movement
+- A* pathfinding integration
+- Grid-snapped movement
+- Smooth interpolation
+
+```bash
+cargo run -p grid_demo
+```
+
+### Performance Demo (`examples/performance_demo/`)
+
+Performance benchmark:
+- Large-scale physics simulation
+- Performance metrics (FPS, physics time, render time)
+- Stress testing
+- Real-time statistics
+
+```bash
+cargo run -p performance_demo
 ```
 

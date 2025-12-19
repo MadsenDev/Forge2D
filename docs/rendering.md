@@ -199,11 +199,74 @@ renderer.draw_text(
 - Position is the bottom-left corner of the first character
 - Text is rendered as sprites (one sprite per glyph)
 
+## HUD Layer
+
+Forge2D provides a HUD (Heads-Up Display) layer for screen-space UI elements that stay fixed on screen regardless of camera position.
+
+### Creating a HUD
+
+```rust
+use forge2d::{HudLayer, HudText};
+
+struct MyGame {
+    hud: HudLayer,
+    font: Option<FontHandle>,
+}
+
+impl Game for MyGame {
+    fn init(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        self.font = Some(ctx.builtin_font(forge2d::BuiltinFont::Ui)?);
+        Ok(())
+    }
+    
+    fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        let renderer = ctx.renderer();
+        let mut frame = renderer.begin_frame()?;
+        renderer.clear(&mut frame, [0.1, 0.1, 0.15, 1.0])?;
+        
+        // Draw game sprites...
+        
+        // Draw HUD (screen-space, top-left is 0,0)
+        self.hud.clear();
+        if let Some(font) = self.font {
+            self.hud.add_text(HudText {
+                text: "Score: 100".to_string(),
+                font,
+                size: 20.0,
+                position: Vec2::new(10.0, 10.0), // Top-left corner
+                color: [1.0, 1.0, 1.0, 1.0],
+            });
+        }
+        self.hud.draw(renderer, &mut frame)?;
+        
+        renderer.end_frame(frame)?;
+        Ok(())
+    }
+}
+```
+
+### HUD Elements
+
+- **`HudText`** - Text rendered in screen-space (position in pixels from top-left)
+- **`HudSprite`** - Sprites rendered in screen-space
+- **`HudRect`** - Rectangles for panels/bars
+
+### HUD Coordinate System
+
+HUD positions use screen-space coordinates where `(0, 0)` is the top-left corner of the screen. Positions are in pixels.
+
 ## Performance Notes
 
 ### Batched Rendering
 
 Forge2D automatically batches all sprites into a single render pass per frame for optimal performance. You don't need to do anything special - just call `draw_sprite()` for each sprite.
+
+### Sprite Limit
+
+The renderer supports up to **2048 sprites per frame** (increased from 256). If you need to draw more sprites, consider:
+- Using viewport culling to only draw visible sprites
+- Using texture atlasing to combine multiple sprites
+- Implementing instanced rendering for repeated sprites
 
 ### Glyph Caching
 

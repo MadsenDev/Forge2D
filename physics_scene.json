@@ -1,0 +1,415 @@
+{
+  "version": 1,
+  "entities": [],
+  "physics": {
+    "gravity": {
+      "x": 0.0,
+      "y": 400.0
+    },
+    "bodies": [
+      {
+        "entity": 256,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 625.118,
+          "y": 610.0355
+        },
+        "rotation": -1.5707189,
+        "linear_velocity": {
+          "x": 0.000012674967,
+          "y": 0.00003136205
+        },
+        "angular_velocity": 8.446097e-7
+      },
+      {
+        "entity": 257,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 384.0,
+          "y": 610.0288
+        },
+        "rotation": 0.3348461,
+        "linear_velocity": {
+          "x": 0.0,
+          "y": -4.3271076e-8
+        },
+        "angular_velocity": 0.0
+      },
+      {
+        "entity": 266,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 1104.0,
+          "y": 1524.0574
+        },
+        "rotation": -0.84810996,
+        "linear_velocity": {
+          "x": 0.0,
+          "y": 239.0222
+        },
+        "angular_velocity": 0.0
+      },
+      {
+        "entity": 263,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 749.8874,
+          "y": 610.03656
+        },
+        "rotation": 1.570736,
+        "linear_velocity": {
+          "x": -0.0000084291305,
+          "y": -0.000022362854
+        },
+        "angular_velocity": -5.6155704e-7
+      },
+      {
+        "entity": 268,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 928.8399,
+          "y": 606.4718
+        },
+        "rotation": 0.068046756,
+        "linear_velocity": {
+          "x": 2.038861,
+          "y": 51.219997
+        },
+        "angular_velocity": 0.114684306
+      },
+      {
+        "entity": 258,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 120.97031,
+          "y": 624.3959
+        },
+        "rotation": -2.6660404,
+        "linear_velocity": {
+          "x": 0.0,
+          "y": 239.0222
+        },
+        "angular_velocity": 0.0
+      },
+      {
+        "entity": 267,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 444.0,
+          "y": 610.0288
+        },
+        "rotation": 0.8586254,
+        "linear_velocity": {
+          "x": 0.0,
+          "y": 1.5721429e-7
+        },
+        "angular_velocity": 0.0
+      },
+      {
+        "entity": 261,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 1064.0,
+          "y": 1524.0574
+        },
+        "rotation": 0.30045822,
+        "linear_velocity": {
+          "x": 0.0,
+          "y": 239.0222
+        },
+        "angular_velocity": 0.0
+      },
+      {
+        "entity": 260,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 256.0,
+          "y": 1424.0574
+        },
+        "rotation": 0.22657673,
+        "linear_velocity": {
+          "x": 0.0,
+          "y": 239.0222
+        },
+        "angular_velocity": 0.0
+      },
+      {
+        "entity": 265,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 663.3276,
+          "y": 610.0355
+        },
+        "rotation": 0.00007740773,
+        "linear_velocity": {
+          "x": 0.000011068614,
+          "y": 0.000026774234
+        },
+        "angular_velocity": 7.3757053e-7
+      },
+      {
+        "entity": 259,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 776.46204,
+          "y": 607.1857
+        },
+        "rotation": 2.9428396,
+        "linear_velocity": {
+          "x": 0.00000416801,
+          "y": -0.000018866736
+        },
+        "angular_velocity": 2.3355244e-7
+      },
+      {
+        "entity": 262,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 1024.0,
+          "y": 1524.0574
+        },
+        "rotation": 0.79981923,
+        "linear_velocity": {
+          "x": 0.0,
+          "y": 239.0222
+        },
+        "angular_velocity": 0.0
+      },
+      {
+        "entity": 264,
+        "body_type": "Dynamic",
+        "position": {
+          "x": 296.0,
+          "y": 1424.0574
+        },
+        "rotation": 0.7842349,
+        "linear_velocity": {
+          "x": 0.0,
+          "y": 239.0222
+        },
+        "angular_velocity": 0.0
+      }
+    ],
+    "colliders": [
+      {
+        "entity": 256,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.0,
+        "is_sensor": false
+      },
+      {
+        "entity": 257,
+        "shape": {
+          "Circle": {
+            "radius": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.0,
+        "is_sensor": false
+      },
+      {
+        "entity": 266,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.1,
+        "restitution": 0.0,
+        "is_sensor": false
+      },
+      {
+        "entity": 263,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.0,
+        "is_sensor": false
+      },
+      {
+        "entity": 268,
+        "shape": {
+          "CapsuleY": {
+            "half_height": 8.0,
+            "radius": 10.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.8,
+        "is_sensor": false
+      },
+      {
+        "entity": 258,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.8,
+        "is_sensor": false
+      },
+      {
+        "entity": 267,
+        "shape": {
+          "Circle": {
+            "radius": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.0,
+        "is_sensor": false
+      },
+      {
+        "entity": 261,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.1,
+        "restitution": 0.0,
+        "is_sensor": false
+      },
+      {
+        "entity": 260,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.8,
+        "is_sensor": false
+      },
+      {
+        "entity": 265,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.0,
+        "is_sensor": false
+      },
+      {
+        "entity": 259,
+        "shape": {
+          "CapsuleY": {
+            "half_height": 8.0,
+            "radius": 10.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.8,
+        "is_sensor": false
+      },
+      {
+        "entity": 262,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.1,
+        "restitution": 0.0,
+        "is_sensor": false
+      },
+      {
+        "entity": 264,
+        "shape": {
+          "Box": {
+            "hx": 15.0,
+            "hy": 15.0
+          }
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "density": 1.0,
+        "friction": 0.5,
+        "restitution": 0.8,
+        "is_sensor": false
+      }
+    ]
+  }
+}

@@ -20,3 +20,6 @@ image.workspace = true
 rodio.workspace = true
 ab_glyph.workspace = true
 rapier2d.workspace = true
+crossbeam-channel.workspace = true
+serde.workspace = true
+serde_json.workspace = true

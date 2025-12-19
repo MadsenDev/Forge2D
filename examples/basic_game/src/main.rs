@@ -380,7 +380,7 @@ impl Game for BasicGame {
                 });
             }
         }
-        
+
         Ok(())
     }
 
@@ -470,7 +470,7 @@ impl Game for BasicGame {
                 eprintln!("Failed to draw instructions: {}", e);
             }
         }
-        
+
         renderer.end_frame(frame)?;
         Ok(())
     }

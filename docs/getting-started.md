@@ -112,4 +112,18 @@ if ctx.audio().is_available() {
 - Learn about [Input Handling](input.md)
 - Explore [Rendering](rendering.md)
 - Check out [Examples](examples.md)
+- Read about [What Forge2D Does and Doesn't Do](../README.md#what-forge2d-intentionally-doesnt-do)
+- Understand the [Development Philosophy](../README.md#philosophy-coherence-over-completeness)
+
+## Important Notes
+
+**Forge2D is not a complete engine**—it's a framework with core systems that you extend. Before starting, understand:
+
+- ✅ What Forge2D **does** provide (rendering, physics, pathfinding, etc.)
+- ❌ What Forge2D **intentionally doesn't** provide (animation, advanced UI, debug tools, etc.)
+- ⚠️ What you'll need to **implement yourself** or use libraries for
+
+See the [README](../README.md) for a complete list of constraints and guarantees.
+
+**Recommended approach:** Pick a reference game type (platformer, top-down, etc.) and build it. Add only what that game forces you to add. This keeps development focused and prevents feature bloat.
 

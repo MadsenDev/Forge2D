@@ -1,8 +1,9 @@
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
+use serde::{Deserialize, Serialize};
 
 /// Unique identifier for an entity in the world.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntityId(u32);
 
 impl EntityId {
@@ -160,6 +161,22 @@ impl World {
 impl Default for World {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl World {
+    /// Restore an entity with a specific ID (for scene loading/play mode restore).
+    /// This marks the entity as alive and ensures it can be queried.
+    /// 
+    /// WARNING: This can cause ID conflicts if the ID is already in use.
+    /// Only use this when restoring from a snapshot where you control all IDs.
+    pub fn restore_entity(&mut self, entity_id: EntityId) {
+        self.alive.insert(entity_id);
+        // Update next_id to avoid conflicts with future spawns
+        let id_num = entity_id.to_u32();
+        if id_num >= self.next_id {
+            self.next_id = id_num.wrapping_add(1).max(1);
+        }
     }
 }
 

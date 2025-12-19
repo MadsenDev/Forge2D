@@ -1,7 +1,8 @@
 use glam::{Mat4, Vec2 as GlamVec2, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// 2D vector type used throughout Forge2D.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Vec2 {
     pub x: f32,
     pub y: f32,
@@ -214,24 +215,35 @@ impl Camera2D {
     pub fn view_projection(&self, width: u32, height: u32) -> Mat4 {
         let projection = Mat4::orthographic_rh_gl(0.0, width as f32, height as f32, 0.0, -1.0, 1.0);
 
+        // Offset camera position by half screen size so camera.position represents the center of the view
+        let half_width = width as f32 / 2.0;
+        let half_height = height as f32 / 2.0;
         let translation =
-            Mat4::from_translation(Vec3::new(-self.position.x, -self.position.y, 0.0));
+            Mat4::from_translation(Vec3::new(-self.position.x + half_width, -self.position.y + half_height, 0.0));
         let zoom = Mat4::from_scale(Vec3::new(self.zoom, self.zoom, 1.0));
 
         projection * zoom * translation
     }
 
     /// Converts screen coordinates to world coordinates using this camera.
-    pub fn screen_to_world(&self, screen_pos: Vec2, _screen_width: u32, _screen_height: u32) -> Vec2 {
-        let world_x = (screen_pos.x / self.zoom) + self.position.x;
-        let world_y = (screen_pos.y / self.zoom) + self.position.y;
+    /// Note: camera.position represents the center of the view, not the top-left corner.
+    pub fn screen_to_world(&self, screen_pos: Vec2, screen_width: u32, screen_height: u32) -> Vec2 {
+        // Account for camera centering: subtract half screen size
+        let half_width = screen_width as f32 / 2.0;
+        let half_height = screen_height as f32 / 2.0;
+        let world_x = (screen_pos.x - half_width) / self.zoom + self.position.x;
+        let world_y = (screen_pos.y - half_height) / self.zoom + self.position.y;
         Vec2::new(world_x, world_y)
     }
 
     /// Converts world coordinates to screen coordinates using this camera.
-    pub fn world_to_screen(&self, world_pos: Vec2, _screen_width: u32, _screen_height: u32) -> Vec2 {
-        let screen_x = (world_pos.x - self.position.x) * self.zoom;
-        let screen_y = (world_pos.y - self.position.y) * self.zoom;
+    /// Note: camera.position represents the center of the view, not the top-left corner.
+    pub fn world_to_screen(&self, world_pos: Vec2, screen_width: u32, screen_height: u32) -> Vec2 {
+        // Account for camera centering: add half screen size
+        let half_width = screen_width as f32 / 2.0;
+        let half_height = screen_height as f32 / 2.0;
+        let screen_x = (world_pos.x - self.position.x) * self.zoom + half_width;
+        let screen_y = (world_pos.y - self.position.y) * self.zoom + half_height;
         Vec2::new(screen_x, screen_y)
     }
 }

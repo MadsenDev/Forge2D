@@ -73,7 +73,13 @@ impl HudLayer {
     /// This should typically be called after world rendering, using the same
     /// frame but with a fixed "HUD camera" that maps pixels directly.
     pub fn draw(&mut self, renderer: &mut Renderer, frame: &mut Frame) -> Result<()> {
-        let hud_camera = Camera2D::default();
+        // Create HUD camera positioned so world (0,0) maps to screen top-left (0,0)
+        // The view_projection centers the camera, so we need to offset by half screen size
+        let (screen_w, screen_h) = renderer.surface_size();
+        let hud_camera = Camera2D::new(Vec2::new(
+            screen_w as f32 / 2.0,
+            screen_h as f32 / 2.0,
+        ));
 
         // Lazily create a 1x1 white texture if we need to draw any rects.
         if self.rect_texture.is_none()

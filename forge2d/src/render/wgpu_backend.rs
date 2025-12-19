@@ -172,9 +172,10 @@ struct SpritePipeline {
     uniform_alignment: u64,
 }
 
-// Maximum number of sprites we can draw per frame (64KB buffer / 256 byte alignment = 256 sprites)
-const MAX_SPRITES_PER_FRAME: usize = 256;
-const UNIFORM_BUFFER_SIZE: u64 = MAX_SPRITES_PER_FRAME as u64 * 256; // 64KB
+// Maximum number of sprites we can draw per frame
+// Increased to 2048 sprites (512KB buffer) for better performance with large scenes
+const MAX_SPRITES_PER_FRAME: usize = 2048;
+const UNIFORM_BUFFER_SIZE: u64 = MAX_SPRITES_PER_FRAME as u64 * 256; // 512KB
 
 struct WgpuBackend {
     surface: wgpu::Surface,

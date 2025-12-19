@@ -48,6 +48,8 @@ impl EngineContext {
     pub fn mouse_world(&self, camera: &Camera2D) -> Vec2;
     pub fn load_texture(&mut self, path: &str) -> Result<TextureHandle>;
     pub fn load_texture_from_bytes(&mut self, id: &str, bytes: &[u8]) -> Result<TextureHandle>;
+    pub fn load_font_from_bytes(&mut self, id: &str, bytes: &[u8]) -> Result<FontHandle>;
+    pub fn builtin_font(&mut self, font: BuiltinFont) -> Result<FontHandle>;
     pub fn request_exit(&mut self);
 }
 ```
@@ -267,6 +269,377 @@ pub trait StateMachineLike {
     fn push(&mut self, state: Box<dyn State>);
     fn pop(&mut self);
     fn replace(&mut self, state: Box<dyn State>);
+}
+```
+
+## Physics
+
+### PhysicsWorld
+
+```rust
+pub struct PhysicsWorld { /* ... */ }
+
+impl PhysicsWorld {
+    pub fn new() -> Self;
+    pub fn with_gravity(gravity: Vec2) -> Self;
+    pub fn set_gravity(&mut self, gravity: Vec2);
+    pub fn gravity(&self) -> Vec2;
+    pub fn clear(&mut self);
+    pub fn create_body(&mut self, entity: EntityId, body_type: RigidBodyType, position: Vec2, rotation: f32) -> Result<()>;
+    pub fn remove_body(&mut self, entity: EntityId);
+    pub fn add_collider_with_material(&mut self, entity: EntityId, shape: ColliderShape, offset: Vec2, density: f32, friction: f32, restitution: f32) -> Result<()>;
+    pub fn add_sensor(&mut self, entity: EntityId, shape: ColliderShape, offset: Vec2) -> Result<()>;
+    pub fn step(&mut self, dt: f32);
+    pub fn body_position(&self, entity: EntityId) -> Option<Vec2>;
+    pub fn body_rotation(&self, entity: EntityId) -> Option<f32>;
+    pub fn linear_velocity(&self, entity: EntityId) -> Option<Vec2>;
+    pub fn set_linear_velocity(&mut self, entity: EntityId, vel: Vec2);
+    pub fn apply_impulse(&mut self, entity: EntityId, impulse: Vec2);
+    pub fn apply_force(&mut self, entity: EntityId, force: Vec2);
+    pub fn lock_rotations(&mut self, entity: EntityId, locked: bool);
+    pub fn set_linear_damping(&mut self, entity: EntityId, d: f32);
+    pub fn on_event<F>(&mut self, callback: F) where F: Fn(PhysicsEvent) + Send + Sync + 'static;
+}
+```
+
+### ColliderShape
+
+```rust
+pub enum ColliderShape {
+    Box { hx: f32, hy: f32 },
+    Circle { radius: f32 },
+    CapsuleY { half_height: f32, radius: f32 },
+}
+```
+
+### RigidBodyType
+
+```rust
+pub enum RigidBodyType {
+    Dynamic,
+    Kinematic,
+    Fixed,
+}
+```
+
+### PhysicsEvent
+
+```rust
+pub enum PhysicsEvent {
+    CollisionEnter { a: EntityId, b: EntityId },
+    CollisionExit { a: EntityId, b: EntityId },
+    TriggerEnter { a: EntityId, b: EntityId },
+    TriggerExit { a: EntityId, b: EntityId },
+}
+```
+
+## Grid System
+
+### Grid
+
+```rust
+pub struct Grid<T> { /* ... */ }
+
+impl<T: Clone> Grid<T> {
+    pub fn new(width: usize, height: usize, cell_size: f32, default: T) -> Self;
+    pub fn width(&self) -> usize;
+    pub fn height(&self) -> usize;
+    pub fn cell_size(&self) -> f32;
+    pub fn world_to_grid(&self, world_pos: Vec2) -> GridCoord;
+    pub fn grid_to_world(&self, coord: GridCoord) -> Vec2;
+    pub fn grid_to_world_top_left(&self, coord: GridCoord) -> Vec2;
+    pub fn is_valid(&self, coord: &GridCoord) -> bool;
+    pub fn get(&self, coord: GridCoord) -> Option<&T>;
+    pub fn get_mut(&mut self, coord: GridCoord) -> Option<&mut T>;
+    pub fn set(&mut self, coord: GridCoord, value: T) -> bool;
+    pub fn neighbors_4(&self, coord: &GridCoord) -> Vec<GridCoord>;
+    pub fn neighbors_8(&self, coord: &GridCoord) -> Vec<GridCoord>;
+    pub fn iter_coords(&self) -> impl Iterator<Item = GridCoord>;
+    pub fn iter(&self) -> impl Iterator<Item = (GridCoord, &T)>;
+}
+```
+
+### GridCoord
+
+```rust
+pub struct GridCoord {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl GridCoord {
+    pub fn new(x: i32, y: i32) -> Self;
+    pub fn manhattan_distance(&self, other: &GridCoord) -> i32;
+    pub fn distance(&self, other: &GridCoord) -> f32;
+}
+```
+
+### GridPathfinding
+
+```rust
+pub trait GridPathfinding {
+    fn is_walkable(&self, coord: &GridCoord) -> bool;
+}
+```
+
+## Pathfinding
+
+### AStarPathfinder
+
+```rust
+pub struct AStarPathfinder;
+
+impl AStarPathfinder {
+    pub fn find_path(grid: &PathfindingGrid, start_world: Vec2, goal_world: Vec2) -> Option<Vec<Vec2>>;
+    pub fn find_path_grid(grid: &PathfindingGrid, start: GridNode, goal: GridNode) -> Option<Vec<GridNode>>;
+}
+```
+
+### PathfindingGrid
+
+```rust
+pub struct PathfindingGrid { /* ... */ }
+
+impl PathfindingGrid {
+    pub fn new(width: usize, height: usize, cell_size: f32) -> Self;
+    pub fn world_to_grid(&self, world_pos: Vec2) -> GridNode;
+    pub fn grid_to_world(&self, node: GridNode) -> Vec2;
+    pub fn is_valid(&self, node: &GridNode) -> bool;
+    pub fn is_walkable(&self, node: &GridNode) -> bool;
+    pub fn set_walkable(&mut self, node: GridNode, walkable: bool);
+    pub fn set_area_walkable(&mut self, x: i32, y: i32, width: i32, height: i32, walkable: bool);
+    pub fn get_neighbors(&self, node: &GridNode) -> Vec<GridNode>;
+}
+```
+
+### GridNode
+
+```rust
+pub struct GridNode {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl GridNode {
+    pub fn new(x: i32, y: i32) -> Self;
+    pub fn distance_to(&self, other: &GridNode) -> f32;
+    pub fn manhattan_distance(&self, other: &GridNode) -> i32;
+}
+```
+
+## Camera Follow
+
+### CameraFollow
+
+```rust
+pub struct CameraFollow {
+    pub target_entity: Option<EntityId>,
+    pub target_position: Option<Vec2>,
+    pub dead_zone: Vec2,
+    pub max_speed: f32,
+    pub smooth: bool,
+    pub smooth_factor: f32,
+}
+
+impl CameraFollow {
+    pub fn new() -> Self;
+    pub fn follow_entity(self, entity: EntityId) -> Self;
+    pub fn follow_position(self, position: Vec2) -> Self;
+    pub fn with_dead_zone(self, width: f32, height: f32) -> Self;
+    pub fn with_smoothing(self, factor: f32) -> Self;
+    pub fn with_max_speed(self, speed: f32) -> Self;
+}
+```
+
+### update_camera_follow
+
+```rust
+pub fn update_camera_follow(
+    camera: &mut Camera2D,
+    follow: &CameraFollow,
+    physics: &PhysicsWorld,
+    dt: f32,
+);
+```
+
+## Built-in Entities
+
+### Transform
+
+```rust
+pub struct Transform {
+    pub position: Vec2,
+    pub rotation: f32,
+    pub scale: Vec2,
+}
+
+impl Transform {
+    pub fn new(position: Vec2) -> Self;
+    pub fn with_rotation(self, rotation: f32) -> Self;
+    pub fn with_scale(self, scale: Vec2) -> Self;
+}
+```
+
+### SpriteComponent
+
+```rust
+pub struct SpriteComponent {
+    pub texture: TextureHandle,
+    pub sprite: Sprite,
+    pub visible: bool,
+}
+
+impl SpriteComponent {
+    pub fn new(texture: TextureHandle) -> Self;
+    pub fn with_tint(self, r: f32, g: f32, b: f32, a: f32) -> Self;
+}
+```
+
+### PhysicsBody
+
+```rust
+pub struct PhysicsBody {
+    pub body_type: RigidBodyType,
+    pub collider_shape: Option<ColliderShape>,
+}
+
+impl PhysicsBody {
+    pub fn new(body_type: RigidBodyType) -> Self;
+    pub fn with_collider(self, shape: ColliderShape) -> Self;
+}
+```
+
+### Tag Components
+
+```rust
+pub struct Player;
+pub struct Enemy;
+pub struct Collectible { pub value: i32 }
+pub struct Hazard { pub damage: i32 }
+pub struct Checkpoint { pub checkpoint_id: u32 }
+pub struct Trigger { pub trigger_id: u32, pub activated: bool }
+pub struct MovingPlatform { pub start_pos: Vec2, pub end_pos: Vec2, pub speed: f32, /* ... */ }
+pub struct AudioSource { pub volume: f32, pub pitch: f32, pub looping: bool, /* ... */ }
+pub struct CameraComponent { pub camera: Camera2D, pub active: bool }
+```
+
+## Scene Serialization
+
+### Scene
+
+```rust
+pub struct Scene {
+    pub version: u32,
+    pub entities: Vec<SerializableEntity>,
+    pub physics: SerializablePhysics,
+}
+
+impl Scene {
+    pub fn new() -> Self;
+}
+```
+
+### create_scene
+
+```rust
+pub fn create_scene(world: &World, physics: &PhysicsWorld) -> Result<Scene>;
+```
+
+### restore_scene_physics
+
+```rust
+pub fn restore_scene_physics(physics: &mut PhysicsWorld, data: &SerializablePhysics) -> Result<()>;
+```
+
+### ComponentSerializable
+
+```rust
+pub trait ComponentSerializable {
+    fn serialize(&self) -> SerializableComponent;
+    fn deserialize(data: &serde_json::Value) -> Result<Self>;
+}
+```
+
+## HUD
+
+### HudLayer
+
+```rust
+pub struct HudLayer { /* ... */ }
+
+impl HudLayer {
+    pub fn new() -> Self;
+    pub fn clear(&mut self);
+    pub fn add_text(&mut self, text: HudText);
+    pub fn add_sprite(&mut self, sprite: HudSprite);
+    pub fn add_rect(&mut self, rect: HudRect);
+    pub fn draw(&mut self, renderer: &mut Renderer, frame: &mut Frame) -> Result<()>;
+}
+```
+
+### HudText
+
+```rust
+pub struct HudText {
+    pub text: String,
+    pub font: FontHandle,
+    pub size: f32,
+    pub position: Vec2,  // Screen-space pixels (0,0 = top-left)
+    pub color: [f32; 4],
+}
+```
+
+### HudSprite
+
+```rust
+pub struct HudSprite {
+    pub sprite: Sprite,
+    pub position: Vec2,  // Screen-space pixels
+}
+```
+
+### HudRect
+
+```rust
+pub struct HudRect {
+    pub position: Vec2,  // Top-left in screen-space pixels
+    pub size: Vec2,      // Width/height in pixels
+    pub color: [f32; 4],
+}
+```
+
+## World & Entities
+
+### World
+
+```rust
+pub struct World { /* ... */ }
+
+impl World {
+    pub fn new() -> Self;
+    pub fn spawn(&mut self) -> EntityId;
+    pub fn despawn(&mut self, entity: EntityId);
+    pub fn is_alive(&self, entity: EntityId) -> bool;
+    pub fn len(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
+    pub fn insert<T: 'static>(&mut self, entity: EntityId, component: T);
+    pub fn get<T: 'static>(&self, entity: EntityId) -> Option<&T>;
+    pub fn get_mut<T: 'static>(&mut self, entity: EntityId) -> Option<&mut T>;
+    pub fn remove<T: 'static>(&mut self, entity: EntityId) -> Option<T>;
+    pub fn query<T: 'static>(&self) -> Vec<(EntityId, &T)>;
+    pub fn serialize_component<T: ComponentSerializable>(&self, entity: EntityId) -> Option<SerializableComponent>;
+    pub fn deserialize_component<T: ComponentSerializable>(&mut self, entity: EntityId, data: &SerializableComponent) -> Result<()>;
+}
+```
+
+### EntityId
+
+```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EntityId(u32);
+
+impl EntityId {
+    pub fn to_u32(self) -> u32;
 }
 ```
 
