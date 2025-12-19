@@ -315,6 +315,64 @@ function App() {
       </div>
 
       <div className="unity-grid">
+        <section className={`panel unity-panel scene-area ${isPlaying ? "playing" : ""}`}>
+          <header className="panel-header tight">
+            <div className="panel-tabs">
+              <span className="panel-tab active">Scene</span>
+            </div>
+            <div className="panel-actions">
+              <span className="panel-footnote">Shaded</span>
+            </div>
+          </header>
+          <div className="scene-viewport">
+            {isPlaying && <div className="mode-banner">Play Mode</div>}
+            <div className="viewport-toolbar">
+              <span className="viewport-pill">Tool: {currentTool}</span>
+              <span className="viewport-pill">Selection: {selectedEntityId ?? "None"}</span>
+              <span className="viewport-pill muted">
+                Undo: {canUndo ? "Available" : "-"} / Redo: {canRedo ? "Available" : "-"}
+              </span>
+            </div>
+            <div className="viewport-surface">
+              <Viewport
+                entities={entities}
+                selectedEntityId={selectedEntityId}
+                onEntityClick={handleEntityClick}
+                onTransformChange={async () => {
+                  await refreshEntities();
+                  setInspectorRefreshTrigger(prev => prev + 1);
+                }}
+                isPlaying={isPlaying}
+                tool={currentTool}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="panel unity-panel game-area">
+          <header className="panel-header tight">
+            <div className="panel-tabs">
+              <span className="panel-tab active">Game</span>
+            </div>
+            <div className="panel-actions">
+              <span className="panel-footnote muted">{isPlaying ? "Live" : "Stopped"}</span>
+            </div>
+          </header>
+          <div className="panel-body muted-bg game-body">
+            <div className="game-preview">
+              <div className="game-preview-surface">
+                <div className="game-preview-frame">
+                  <div className="game-overlay">Game view</div>
+                </div>
+              </div>
+              <div className="game-status-row">
+                <span className="viewport-pill">Resolution: 1920 x 1080</span>
+                <span className="viewport-pill">Play Mode: {isPlaying ? "Running" : "Stopped"}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section className="panel unity-panel hierarchy-area">
           <header className="panel-header tight">
             <div className="panel-tabs">
@@ -352,41 +410,6 @@ function App() {
           <footer className="panel-footer tight">
             <span className="panel-footnote">{entities.length} objects in scene</span>
           </footer>
-        </section>
-
-        <section className={`panel unity-panel scene-area ${isPlaying ? "playing" : ""}`}>
-          <header className="panel-header tight">
-            <div className="panel-tabs">
-              <span className="panel-tab active">Scene</span>
-              <span className="panel-tab">Game</span>
-            </div>
-            <div className="panel-actions">
-              <span className="panel-footnote">Shaded</span>
-            </div>
-          </header>
-          <div className="scene-viewport">
-            {isPlaying && <div className="mode-banner">Play Mode</div>}
-            <div className="viewport-toolbar">
-              <span className="viewport-pill">Tool: {currentTool}</span>
-              <span className="viewport-pill">Selection: {selectedEntityId ?? "None"}</span>
-              <span className="viewport-pill muted">
-                Undo: {canUndo ? "Available" : "-"} / Redo: {canRedo ? "Available" : "-"}
-              </span>
-            </div>
-            <div className="viewport-surface">
-              <Viewport
-                entities={entities}
-                selectedEntityId={selectedEntityId}
-                onEntityClick={handleEntityClick}
-                onTransformChange={async () => {
-                  await refreshEntities();
-                  setInspectorRefreshTrigger(prev => prev + 1);
-                }}
-                isPlaying={isPlaying}
-                tool={currentTool}
-              />
-            </div>
-          </div>
         </section>
 
         <section className="panel unity-panel inspector-area">
