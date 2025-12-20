@@ -85,14 +85,12 @@
   display: grid;
   grid-template-areas:
     "scene hierarchy project inspector"
-    "game hierarchy project inspector"
-    "console console console console";
-  grid-template-columns: 1.4fr 260px 320px 340px;
-  grid-template-rows: 1.2fr 0.9fr 180px;
+    "game hierarchy project inspector";
   gap: 8px;
   padding: 8px;
   box-sizing: border-box;
   background: radial-gradient(circle at 10% 10%, #323232 0, #2b2b2b 26%, #252525 60%);
+  position: relative;
 }
 
 .panel {

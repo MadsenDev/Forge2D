@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import Inspector from "./Inspector";
@@ -7,6 +7,9 @@ import Hierarchy from "./Hierarchy";
 import FileExplorer from "./FileExplorer";
 import Toolbar, { Tool } from "./Toolbar";
 import Welcome from "./Welcome";
+import ResizablePanel from "./ResizablePanel";
+import { TabData } from "./Tab";
+import SplitterOverlay from "./SplitterOverlay";
 import "./App.css";
 
 interface EntityInfo {
@@ -29,6 +32,128 @@ function App() {
   const [currentTool, setCurrentTool] = useState<Tool>("move");
   const [inspectorRefreshTrigger, setInspectorRefreshTrigger] = useState(0);
   const [fileExplorerRefreshToken, setFileExplorerRefreshToken] = useState(0);
+
+  // Grid column and row sizes for resizing
+  const [columnSizes, setColumnSizes] = useState<number[]>([1.4, 260, 320, 340]);
+  const [rowSizes, setRowSizes] = useState<number[]>([1.2, 0.9]);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const gameRef = useRef<HTMLDivElement>(null);
+  const hierarchyRef = useRef<HTMLDivElement>(null);
+  const projectRef = useRef<HTMLDivElement>(null);
+  const inspectorRef = useRef<HTMLDivElement>(null);
+
+  // Panel and tab management
+  interface PanelState {
+    id: string;
+    tabs: TabData[];
+    activeTabId: string | null;
+    width?: number;
+    height?: number;
+  }
+
+  const [panels, setPanels] = useState<PanelState[]>([
+    {
+      id: "scene",
+      tabs: [{ id: "scene", label: "Scene", content: null, closable: false }],
+      activeTabId: "scene",
+      width: undefined,
+      height: undefined,
+    },
+    {
+      id: "game",
+      tabs: [{ id: "game", label: "Game", content: null, closable: false }],
+      activeTabId: "game",
+      width: undefined,
+      height: undefined,
+    },
+    {
+      id: "hierarchy",
+      tabs: [{ id: "hierarchy", label: "Hierarchy", content: null, closable: false }],
+      activeTabId: "hierarchy",
+      width: 260,
+      height: undefined,
+    },
+    {
+      id: "project",
+      tabs: [
+        { id: "project", label: "Project", content: null, closable: false },
+      ],
+      activeTabId: "project",
+      width: 320,
+      height: undefined,
+    },
+    {
+      id: "inspector",
+      tabs: [
+        { id: "inspector", label: "Inspector", content: null, closable: false },
+      ],
+      activeTabId: "inspector",
+      width: 340,
+      height: undefined,
+    },
+  ]);
+
+  const handleTabActivate = (panelId: string, tabId: string) => {
+    setPanels((prev) =>
+      prev.map((panel) =>
+        panel.id === panelId ? { ...panel, activeTabId: tabId } : panel
+      )
+    );
+  };
+
+  const handleTabClose = (panelId: string, tabId: string) => {
+    setPanels((prev) =>
+      prev.map((panel) => {
+        if (panel.id !== panelId) return panel;
+        const newTabs = panel.tabs.filter((tab) => tab.id !== tabId);
+        if (newTabs.length === 0) return panel; // Don't close if it's the last tab
+        const newActiveTabId =
+          panel.activeTabId === tabId
+            ? newTabs[0]?.id || null
+            : panel.activeTabId;
+        return { ...panel, tabs: newTabs, activeTabId: newActiveTabId };
+      })
+    );
+  };
+
+  const handleTabDragStart = (e: React.DragEvent, panelId: string, tabId: string) => {
+    e.dataTransfer.setData("panelId", panelId);
+    e.dataTransfer.setData("tabId", tabId);
+  };
+
+  const handleTabDrop = (e: React.DragEvent, targetPanelId: string) => {
+    e.preventDefault();
+    const sourcePanelId = e.dataTransfer.getData("panelId");
+    const tabId = e.dataTransfer.getData("tabId");
+
+    if (!sourcePanelId || !tabId || sourcePanelId === targetPanelId) return;
+
+    setPanels((prev) => {
+      const sourcePanel = prev.find((p) => p.id === sourcePanelId);
+      if (!sourcePanel) return prev;
+
+      const tab = sourcePanel.tabs.find((t) => t.id === tabId);
+      if (!tab) return prev;
+
+      return prev.map((panel) => {
+        if (panel.id === sourcePanelId) {
+          // Remove tab from source panel
+          const newTabs = panel.tabs.filter((t) => t.id !== tabId);
+          const newActiveTabId =
+            panel.activeTabId === tabId
+              ? newTabs[0]?.id || null
+              : panel.activeTabId;
+          return { ...panel, tabs: newTabs, activeTabId: newActiveTabId };
+        } else if (panel.id === targetPanelId) {
+          // Add tab to target panel
+          const newTabs = [...panel.tabs, tab];
+          return { ...panel, tabs: newTabs, activeTabId: tabId };
+        }
+        return panel;
+      });
+    });
+  };
 
   // Check if project is open on mount
   useEffect(() => {
@@ -314,16 +439,27 @@ function App() {
         />
       </div>
 
-      <div className="unity-grid">
-        <section className={`panel unity-panel scene-area ${isPlaying ? "playing" : ""}`}>
-          <header className="panel-header tight">
-            <div className="panel-tabs">
-              <span className="panel-tab active">Scene</span>
-            </div>
-            <div className="panel-actions">
-              <span className="panel-footnote">Shaded</span>
-            </div>
-          </header>
+      <div 
+        ref={gridRef}
+        className="unity-grid"
+        style={{
+          gridTemplateColumns: `${columnSizes[0]}fr ${columnSizes[1]}px ${columnSizes[2]}px ${columnSizes[3]}px`,
+          gridTemplateRows: `${rowSizes[0]}fr ${rowSizes[1]}fr`,
+        }}
+      >
+        <ResizablePanel
+          id="scene"
+          ref={sceneRef}
+          tabs={panels.find((p) => p.id === "scene")?.tabs || []}
+          activeTabId={panels.find((p) => p.id === "scene")?.activeTabId || null}
+          onTabActivate={handleTabActivate}
+          onTabClose={handleTabClose}
+          onTabDragStart={handleTabDragStart}
+          onTabDrop={handleTabDrop}
+          headerActions={<span className="panel-footnote">Shaded</span>}
+          className={`scene-area ${isPlaying ? "playing" : ""}`}
+          resizable={{ horizontal: true, vertical: true }}
+        >
           <div className="scene-viewport">
             {isPlaying && <div className="mode-banner">Play Mode</div>}
             <div className="viewport-toolbar">
@@ -347,18 +483,23 @@ function App() {
               />
             </div>
           </div>
-        </section>
+        </ResizablePanel>
 
-        <section className="panel unity-panel game-area">
-          <header className="panel-header tight">
-            <div className="panel-tabs">
-              <span className="panel-tab active">Game</span>
-            </div>
-            <div className="panel-actions">
-              <span className="panel-footnote muted">{isPlaying ? "Live" : "Stopped"}</span>
-            </div>
-          </header>
-          <div className="panel-body muted-bg game-body">
+        <ResizablePanel
+          id="game"
+          ref={gameRef}
+          tabs={panels.find((p) => p.id === "game")?.tabs || []}
+          activeTabId={panels.find((p) => p.id === "game")?.activeTabId || null}
+          onTabActivate={handleTabActivate}
+          onTabClose={handleTabClose}
+          onTabDragStart={handleTabDragStart}
+          onTabDrop={handleTabDrop}
+          headerActions={<span className="panel-footnote muted">{isPlaying ? "Live" : "Stopped"}</span>}
+          className="game-area"
+          mutedBg
+          resizable={{ horizontal: true, vertical: true }}
+        >
+          <div className="game-body">
             <div className="game-preview">
               <div className="game-preview-surface">
                 <div className="game-preview-frame">
@@ -371,14 +512,19 @@ function App() {
               </div>
             </div>
           </div>
-        </section>
+        </ResizablePanel>
 
-        <section className="panel unity-panel hierarchy-area">
-          <header className="panel-header tight">
-            <div className="panel-tabs">
-              <span className="panel-tab active">Hierarchy</span>
-            </div>
-            <div className="panel-actions">
+        <ResizablePanel
+          id="hierarchy"
+          ref={hierarchyRef}
+          tabs={panels.find((p) => p.id === "hierarchy")?.tabs || []}
+          activeTabId={panels.find((p) => p.id === "hierarchy")?.activeTabId || null}
+          onTabActivate={handleTabActivate}
+          onTabClose={handleTabClose}
+          onTabDragStart={handleTabDragStart}
+          onTabDrop={handleTabDrop}
+          headerActions={
+            <>
               <button onClick={handleCreateEntity} disabled={isPlaying} className="unity-button">
                 Create
               </button>
@@ -396,71 +542,123 @@ function App() {
               >
                 Delete
               </button>
-            </div>
-          </header>
-          <div className="panel-body muted-bg">
-            <Hierarchy
-              entities={entities}
-              selectedEntityId={selectedEntityId}
-              onEntityClick={async (id) => {
-                await handleEntityClick(id);
-              }}
-            />
-          </div>
-          <footer className="panel-footer tight">
-            <span className="panel-footnote">{entities.length} objects in scene</span>
-          </footer>
-        </section>
+            </>
+          }
+          footer={<span className="panel-footnote">{entities.length} objects in scene</span>}
+          className="hierarchy-area"
+          mutedBg
+          resizable={{ horizontal: true, vertical: true }}
+        >
+          <Hierarchy
+            entities={entities}
+            selectedEntityId={selectedEntityId}
+            onEntityClick={async (id) => {
+              await handleEntityClick(id);
+            }}
+          />
+        </ResizablePanel>
 
-        <section className="panel unity-panel inspector-area">
-          <header className="panel-header tight">
-            <div className="panel-tabs">
-              <span className="panel-tab active">Inspector</span>
-              <span className="panel-tab">Services</span>
-            </div>
-            <div className="panel-actions">
-              <span className="panel-footnote muted">Static</span>
-            </div>
-          </header>
-          <div className="panel-body">
-            <Inspector selectedEntityId={selectedEntityId} refreshTrigger={inspectorRefreshTrigger} />
-          </div>
-        </section>
-
-        <section className="panel unity-panel project-area">
-          <header className="panel-header tight">
-            <div className="panel-tabs">
-              <span className="panel-tab active">Project</span>
-              <span className="panel-tab">Console</span>
-              <span className="panel-tab">Animator</span>
-            </div>
-            <div className="panel-actions">
-              <button onClick={() => setFileExplorerRefreshToken((t) => t + 1)} className="unity-button muted">
-                Refresh
-              </button>
-            </div>
-          </header>
-          <div className="panel-body muted-bg">
+        <ResizablePanel
+          id="project"
+          ref={projectRef}
+          tabs={panels.find((p) => p.id === "project")?.tabs || []}
+          activeTabId={panels.find((p) => p.id === "project")?.activeTabId || null}
+          onTabActivate={handleTabActivate}
+          onTabClose={handleTabClose}
+          onTabDragStart={handleTabDragStart}
+          onTabDrop={handleTabDrop}
+          headerActions={
+            <button onClick={() => setFileExplorerRefreshToken((t) => t + 1)} className="unity-button muted">
+              Refresh
+            </button>
+          }
+          className="project-area"
+          mutedBg
+          resizable={{ horizontal: true, vertical: true }}
+        >
+          {panels.find((p) => p.id === "project")?.activeTabId === "project" && (
             <FileExplorer refreshToken={fileExplorerRefreshToken} />
-          </div>
-        </section>
+          )}
+          {panels.find((p) => p.id === "project")?.activeTabId === "console-tab" && (
+            <div className="console-body">
+              <div className="console-line">Project: {projectName ?? "No project open"}</div>
+              <div className="console-line">Play state: {isPlaying ? "Running" : "Stopped"}</div>
+              <div className="console-line">Selection: {selectedEntityId ?? "None"}</div>
+              <div className="console-line">Layout: Unity 2 by 3</div>
+            </div>
+          )}
+          {panels.find((p) => p.id === "project")?.activeTabId === "animator" && (
+            <div className="panel-body">Animator view</div>
+          )}
+        </ResizablePanel>
 
-        <section className="panel unity-panel console-area">
-          <header className="panel-header tight">
-            <div className="panel-tabs">
-              <span className="panel-tab active">Console</span>
-            </div>
-            <div className="panel-actions">
-              <span className="panel-footnote muted">Clear</span>
-            </div>
-          </header>
-          <div className="panel-body console-body">
-            <div className="console-line">Project: {projectName ?? "No project open"}</div>
-            <div className="console-line">Play state: {isPlaying ? "Running" : "Stopped"}</div>
-            <div className="console-line">Selection: {selectedEntityId ?? "None"}</div>
-            <div className="console-line">Layout: Unity 2 by 3</div>
-          </div>
-        </section>
+        <ResizablePanel
+          id="inspector"
+          ref={inspectorRef}
+          tabs={panels.find((p) => p.id === "inspector")?.tabs || []}
+          activeTabId={panels.find((p) => p.id === "inspector")?.activeTabId || null}
+          onTabActivate={handleTabActivate}
+          onTabClose={handleTabClose}
+          onTabDragStart={handleTabDragStart}
+          onTabDrop={handleTabDrop}
+          headerActions={<span className="panel-footnote muted">Static</span>}
+          className="inspector-area"
+          resizable={{ horizontal: true, vertical: true }}
+        >
+          <Inspector selectedEntityId={selectedEntityId} refreshTrigger={inspectorRefreshTrigger} />
+        </ResizablePanel>
+
+        <SplitterOverlay
+          gridRef={gridRef}
+          sceneRef={sceneRef}
+          gameRef={gameRef}
+          hierarchyRef={hierarchyRef}
+          projectRef={projectRef}
+          inspectorRef={inspectorRef}
+          onResizeVertical={(delta) => {
+            setRowSizes((prev) => {
+              const newSizes = [...prev];
+              const minSize = 0.3;
+              // Resize first row (scene) and second row (game)
+              const newFirst = Math.max(minSize, newSizes[0] + delta / 100);
+              const totalHeight = newSizes[0] + newSizes[1];
+              const newSecond = totalHeight - newFirst;
+              if (newSecond < minSize) return prev;
+              return [newFirst, Math.max(minSize, newSecond)];
+            });
+          }}
+          onResizeHorizontal1={(delta) => {
+            setColumnSizes((prev) => {
+              const newSizes = [...prev];
+              const minSize = 150;
+              // Resize scene/game (column 0, fr) and hierarchy (column 1, px)
+              const newHierarchy = Math.max(minSize, newSizes[1] - delta);
+              if (newHierarchy === newSizes[1]) return prev; // Hit minimum
+              // Adjust scene flex proportionally
+              const flexAdjustment = delta / 100;
+              const newSceneFlex = Math.max(0.5, newSizes[0] + flexAdjustment);
+              return [newSceneFlex, newHierarchy, newSizes[2], newSizes[3]];
+            });
+          }}
+          onResizeHorizontal2={(delta: number) => {
+            setColumnSizes((prev) => {
+              const newSizes = [...prev];
+              const minSize = 150;
+              // Resize hierarchy (column 1) and project (column 2)
+              if (newSizes[1] + delta < minSize || newSizes[2] - delta < minSize) return prev;
+              return [newSizes[0], newSizes[1] + delta, newSizes[2] - delta, newSizes[3]];
+            });
+          }}
+          onResizeHorizontal3={(delta: number) => {
+            setColumnSizes((prev) => {
+              const newSizes = [...prev];
+              const minSize = 150;
+              // Resize project (column 2) and inspector (column 3)
+              if (newSizes[2] + delta < minSize || newSizes[3] - delta < minSize) return prev;
+              return [newSizes[0], newSizes[1], newSizes[2] + delta, newSizes[3] - delta];
+            });
+          }}
+        />
       </div>
     </div>
   );

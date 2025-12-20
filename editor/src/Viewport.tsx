@@ -139,28 +139,57 @@ export default function Viewport({
     const frameInterval = 1000 / targetFPS;
 
     const draw = () => {
-      // Clear canvas
+      // Use display dimensions (not internal canvas dimensions) for all calculations
+      const displayWidth = canvasSize.width || canvas.clientWidth;
+      const displayHeight = canvasSize.height || canvas.clientHeight;
+      
+      // Clear canvas (use internal dimensions for clearing)
       ctx.fillStyle = "#0a0a0a";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Draw grid
+      // Draw grid with square cells on screen
+      // Use the same pixel spacing for both X and Y to ensure squares
       ctx.strokeStyle = "#1a1a1a";
       ctx.lineWidth = 1;
-      const gridSize = 50 * camera.zoom;
-      const startX = (camera.x % gridSize) - gridSize;
-      const startY = (camera.y % gridSize) - gridSize;
-
-      for (let x = startX; x < canvas.width; x += gridSize) {
+      
+      // Grid size in world units (this defines the actual world grid)
+      const gridSizeWorld = 50;
+      
+      // Convert to screen pixels - use the same conversion for both axes
+      // This ensures grid cells are square on screen
+      const gridSizeScreen = gridSizeWorld * camera.zoom;
+      
+      // Calculate where the camera center is in screen space
+      const cameraScreenX = canvas.width / 2;
+      const cameraScreenY = canvas.height / 2;
+      
+      // Convert camera world position to screen offset
+      // The camera position in world space, when converted to screen, offsets from center
+      const screenOffsetX = camera.x * camera.zoom;
+      const screenOffsetY = camera.y * camera.zoom;
+      
+      // Calculate the first grid line position in screen space
+      // Start from camera center, offset by world position, then align to grid
+      const firstGridX = cameraScreenX - screenOffsetX;
+      const firstGridY = cameraScreenY - screenOffsetY;
+      
+      // Align to grid boundaries
+      const startX = Math.floor(firstGridX / gridSizeScreen) * gridSizeScreen;
+      const startY = Math.floor(firstGridY / gridSizeScreen) * gridSizeScreen;
+      
+      // Draw vertical lines - use same gridSizeScreen for spacing
+      for (let x = startX; x <= displayWidth + gridSizeScreen; x += gridSizeScreen) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
+        ctx.lineTo(x, displayHeight);
         ctx.stroke();
       }
-
-      for (let y = startY; y < canvas.height; y += gridSize) {
+      
+      // Draw horizontal lines - use same gridSizeScreen for spacing (ensures squares)
+      for (let y = startY; y <= displayHeight + gridSizeScreen; y += gridSizeScreen) {
         ctx.beginPath();
         ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
+        ctx.lineTo(displayWidth, y);
         ctx.stroke();
       }
 
@@ -172,9 +201,9 @@ export default function Viewport({
 
         // Convert world to screen coordinates (matching engine's Camera2D.world_to_screen)
         const screenX =
-          (transform.position[0] - camera.x) * camera.zoom + canvas.width / 2;
+          (transform.position[0] - camera.x) * camera.zoom + displayWidth / 2;
         const screenY =
-          (transform.position[1] - camera.y) * camera.zoom + canvas.height / 2;
+          (transform.position[1] - camera.y) * camera.zoom + displayHeight / 2;
 
         const isSelected = selectedEntityId === entity.id;
         const sprite = spriteCache.get(entity.id);
@@ -386,14 +415,44 @@ export default function Viewport({
     if (!canvas) return;
 
     const resize = () => {
-      canvas.width = canvas.clientWidth;
-      canvas.height = canvas.clientHeight;
-      setCanvasSize({ width: canvas.width, height: canvas.height });
+      // Get the actual display size (CSS pixels)
+      const displayWidth = canvas.clientWidth;
+      const displayHeight = canvas.clientHeight;
+      
+      // Get device pixel ratio to handle high-DPI displays
+      const dpr = window.devicePixelRatio || 1;
+      
+      // Set internal canvas size accounting for device pixel ratio
+      // This ensures crisp rendering and prevents stretching
+      const internalWidth = Math.floor(displayWidth * dpr);
+      const internalHeight = Math.floor(displayHeight * dpr);
+      
+      if (canvas.width !== internalWidth || canvas.height !== internalHeight) {
+        canvas.width = internalWidth;
+        canvas.height = internalHeight;
+        
+        // Scale the context to account for device pixel ratio
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.scale(dpr, dpr);
+        }
+        
+        // Store the display size (not internal size) for calculations
+        setCanvasSize({ width: displayWidth, height: displayHeight });
+      }
     };
 
     resize();
+    
+    // Use ResizeObserver to detect when container size changes
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas);
+    
     window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+      resizeObserver.disconnect();
+    };
   }, []);
 
   return (
