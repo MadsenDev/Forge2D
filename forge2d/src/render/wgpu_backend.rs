@@ -7,12 +7,13 @@ use wgpu::{
     vertex_attr_array, AddressMode, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
     BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, CommandEncoder,
-    CommandEncoderDescriptor, CompositeAlphaMode, DeviceDescriptor, Extent3d, Features, FilterMode,
-    FragmentState, ImageCopyTexture, ImageDataLayout, Instance, Limits, LoadOp, MultisampleState,
+    CommandEncoderDescriptor, CompositeAlphaMode, DeviceDescriptor, Extent3d, FilterMode,
+    FragmentState, Instance, LoadOp, MultisampleState,
     Operations, Origin3d, PipelineLayoutDescriptor, PresentMode, PrimitiveState,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
     RequestAdapterOptions, Sampler, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor,
-    ShaderSource, SurfaceConfiguration, SurfaceError, Texture, TextureAspect, TextureDescriptor,
+    ShaderSource, SurfaceConfiguration, TexelCopyBufferLayout, TexelCopyTextureInfo,
+    Texture, TextureAspect, TextureDescriptor,
     TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
     TextureViewDescriptor, TextureViewDimension, VertexState,
 };
@@ -32,12 +33,12 @@ struct SpriteDrawCommand {
 }
 
 /// Wrapper around wgpu surface/device setup and simple frame management.
-pub struct Renderer {
-    backend: WgpuBackend,
+pub struct Renderer<'window> {
+    backend: WgpuBackend<'window>,
 }
 
-impl Renderer {
-    pub fn new(window: &Window, vsync: bool) -> Result<Self> {
+impl<'window> Renderer<'window> {
+    pub fn new(window: &'window Window, vsync: bool) -> Result<Self> {
         let backend = WgpuBackend::new(window, vsync)?;
         Ok(Self { backend })
     }
@@ -135,6 +136,37 @@ impl Renderer {
         self.backend
             .draw_text(frame, text, font, size, position, color, camera)
     }
+
+    /// Measure the width of text without drawing it.
+    /// This is useful for accurate text alignment in HUD elements.
+    pub fn measure_text_width(&mut self, text: &str, font: FontHandle, size: f32) -> Result<f32> {
+        self.backend.measure_text_width(text, font, size)
+    }
+
+    /// Draw a filled polygon from a list of points.
+    /// Points should be in world coordinates and will be transformed by the camera.
+    pub fn draw_polygon(
+        &mut self,
+        frame: &mut Frame,
+        points: &[Vec2],
+        color: [f32; 4],
+        camera: &Camera2D,
+    ) -> Result<()> {
+        self.backend.draw_polygon(frame, points, color, camera)
+    }
+
+    /// Draw a filled circle.
+    /// Center and radius are in world coordinates.
+    pub fn draw_circle(
+        &mut self,
+        frame: &mut Frame,
+        center: Vec2,
+        radius: f32,
+        color: [f32; 4],
+        camera: &Camera2D,
+    ) -> Result<()> {
+        self.backend.draw_circle(frame, center, radius, color, camera)
+    }
 }
 
 pub struct Frame {
@@ -177,13 +209,14 @@ struct SpritePipeline {
 const MAX_SPRITES_PER_FRAME: usize = 2048;
 const UNIFORM_BUFFER_SIZE: u64 = MAX_SPRITES_PER_FRAME as u64 * 256; // 512KB
 
-struct WgpuBackend {
-    surface: wgpu::Surface,
+struct WgpuBackend<'window> {
+    surface: wgpu::Surface<'window>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_config: SurfaceConfiguration,
     present_mode: PresentMode,
     sprite_pipeline: SpritePipeline,
+    shape_pipeline: ShapePipeline,
     textures: HashMap<TextureHandle, TextureEntry>,
     next_texture_id: u32,
     uniform_write_offset: u64, // Current offset for writing uniforms
@@ -203,6 +236,26 @@ struct SpriteVertex {
 struct SpriteUniforms {
     mvp: [[f32; 4]; 4],
     color: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ShapeUniforms {
+    mvp: [[f32; 4]; 4],
+    color: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ShapeVertex {
+    position: [f32; 2],
+}
+
+struct ShapePipeline {
+    pipeline: RenderPipeline,
+    bind_group_layout: BindGroupLayout,
+    uniform_buffer: Buffer,
+    uniform_alignment: u64,
 }
 
 const SPRITE_VERTICES: [SpriteVertex; 6] = [
@@ -232,25 +285,26 @@ const SPRITE_VERTICES: [SpriteVertex; 6] = [
     },
 ];
 
-impl WgpuBackend {
-    fn new(window: &Window, vsync: bool) -> Result<Self> {
+impl<'window> WgpuBackend<'window> {
+    fn new(window: &'window Window, vsync: bool) -> Result<Self> {
         let instance = Instance::default();
-        let surface = unsafe { instance.create_surface(window)? };
+        let surface = instance.create_surface(window)?;
 
         let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-        }))
-        .ok_or_else(|| anyhow!("No suitable GPU adapters found"))?;
+        }))?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(
             &DeviceDescriptor {
                 label: Some("forge2d-device"),
-                features: Features::empty(),
-                limits: Limits::default(),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                experimental_features: Default::default(),
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
             },
-            None,
         ))?;
 
         let size = window.inner_size();
@@ -273,10 +327,12 @@ impl WgpuBackend {
             present_mode,
             alpha_mode,
             view_formats: vec![],
+            desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &surface_config);
 
         let sprite_pipeline = create_sprite_pipeline(&device, format);
+        let shape_pipeline = create_shape_pipeline(&device, format);
 
         Ok(Self {
             surface,
@@ -285,6 +341,7 @@ impl WgpuBackend {
             surface_config,
             present_mode,
             sprite_pipeline,
+            shape_pipeline,
             textures: HashMap::new(),
             next_texture_id: 1,
             uniform_write_offset: 0,
@@ -329,13 +386,23 @@ impl WgpuBackend {
                         sprite_draws: Vec::new(),
                     });
                 }
-                Err(SurfaceError::Lost) | Err(SurfaceError::Outdated) => {
-                    self.surface.configure(&self.device, &self.surface_config);
+                Err(e) => {
+                    match e {
+                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                            self.surface.configure(&self.device, &self.surface_config);
+                            continue;
+                        }
+                        wgpu::SurfaceError::Timeout => {
+                            continue;
+                        }
+                        wgpu::SurfaceError::OutOfMemory => {
+                            return Err(anyhow!("Surface ran out of memory"));
+                        }
+                        wgpu::SurfaceError::Other => {
+                            return Err(anyhow!("Surface error: Other"));
+                        }
+                    }
                 }
-                Err(SurfaceError::Timeout) => {
-                    continue;
-                }
-                Err(SurfaceError::OutOfMemory) => return Err(anyhow!("Surface ran out of memory")),
             }
         }
     }
@@ -359,10 +426,14 @@ impl WgpuBackend {
                             b: color[2] as f64,
                             a: color[3] as f64,
                         }),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
+                multiview_mask: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
             });
             drop(_pass);
         }
@@ -468,10 +539,14 @@ impl WgpuBackend {
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Load, // Load previous content (from clear)
-                    store: true,
+                    store: wgpu::StoreOp::Store,
                 },
+                depth_slice: None,
             })],
             depth_stencil_attachment: None,
+            multiview_mask: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
         });
 
         pass.set_pipeline(&self.sprite_pipeline.pipeline);
@@ -550,14 +625,14 @@ impl WgpuBackend {
         });
 
         self.queue.write_texture(
-            ImageCopyTexture {
+            TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
                 origin: Origin3d::ZERO,
                 aspect: TextureAspect::All,
             },
             data,
-            ImageDataLayout {
+            TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * width),
                 rows_per_image: Some(height),
@@ -587,7 +662,7 @@ impl WgpuBackend {
             address_mode_w: AddressMode::ClampToEdge,
             mag_filter,
             min_filter,
-            mipmap_filter: FilterMode::Nearest, // No mipmaps for fonts
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest, // No mipmaps for fonts
             ..Default::default()
         });
 
@@ -850,6 +925,265 @@ impl WgpuBackend {
 
         Ok(())
     }
+
+    /// Measure the width of text without drawing it.
+    /// This is useful for accurate text alignment in HUD elements.
+    fn measure_text_width(&mut self, text: &str, font: FontHandle, size: f32) -> Result<f32> {
+        // Ensure all glyphs are rasterized
+        self.ensure_glyphs_rasterized(text, font, size)?;
+
+        let font_ref = self
+            .text_renderer
+            .get_font(font)
+            .cloned()
+            .ok_or_else(|| anyhow!("Font not found"))?;
+        let scaled_font = font_ref.as_scaled(ab_glyph::PxScale::from(size));
+
+        let mut width = 0.0;
+        let mut prev_glyph: Option<ab_glyph::GlyphId> = None;
+
+        for ch in text.chars() {
+            let glyph_id = font_ref.glyph_id(ch);
+
+            // Apply kerning
+            if let Some(prev) = prev_glyph {
+                width += scaled_font.kern(prev, glyph_id);
+            }
+
+            // Get advance width from cached glyph or font metrics
+            if let Some(glyph) = self.text_renderer.get_glyph(font, ch, size) {
+                width += glyph.advance;
+            } else {
+                // Fallback to font metric if glyph not cached
+                width += scaled_font.h_advance(glyph_id);
+            }
+
+            prev_glyph = Some(glyph_id);
+        }
+
+        Ok(width)
+    }
+
+    fn draw_polygon(
+        &mut self,
+        frame: &mut Frame,
+        points: &[Vec2],
+        color: [f32; 4],
+        camera: &Camera2D,
+    ) -> Result<()> {
+        if points.len() < 3 {
+            return Ok(()); // Need at least 3 points for a triangle
+        }
+
+        // Triangulate polygon using ear clipping
+        let triangles = self.triangulate_polygon(points);
+        if triangles.is_empty() {
+            return Ok(());
+        }
+
+        // Create vertex buffer for this polygon
+        let vertices: Vec<ShapeVertex> = triangles
+            .iter()
+            .flat_map(|&(i0, i1, i2)| {
+                vec![
+                    ShapeVertex {
+                        position: [points[i0].x, points[i0].y],
+                    },
+                    ShapeVertex {
+                        position: [points[i1].x, points[i1].y],
+                    },
+                    ShapeVertex {
+                        position: [points[i2].x, points[i2].y],
+                    },
+                ]
+            })
+            .collect();
+
+        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("shape-vertices"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: BufferUsages::VERTEX,
+        });
+
+        // Create MVP matrix
+        let vp = camera.view_projection(self.surface_config.width, self.surface_config.height);
+        let mvp = vp.to_cols_array_2d();
+
+        let uniforms = ShapeUniforms { mvp, color };
+
+        // Write uniforms
+        self.queue.write_buffer(
+            &self.shape_pipeline.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
+
+        // Create bind group
+        let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("shape-bind-group"),
+            layout: &self.shape_pipeline.bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &self.shape_pipeline.uniform_buffer,
+                    offset: 0,
+                    size: std::num::NonZeroU64::new(std::mem::size_of::<ShapeUniforms>() as u64),
+                }),
+            }],
+        });
+
+        // Draw in a render pass
+        let encoder = frame
+            .encoder
+            .as_mut()
+            .ok_or_else(|| anyhow!("Frame already ended"))?;
+
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("shape-pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &frame.view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            multiview_mask: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        pass.set_pipeline(&self.shape_pipeline.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        pass.draw(0..vertices.len() as u32, 0..1);
+
+        drop(pass);
+
+        Ok(())
+    }
+
+    fn draw_circle(
+        &mut self,
+        frame: &mut Frame,
+        center: Vec2,
+        radius: f32,
+        color: [f32; 4],
+        camera: &Camera2D,
+    ) -> Result<()> {
+        if radius <= 0.0 {
+            return Ok(());
+        }
+
+        // Generate circle vertices using triangle fan
+        const SEGMENTS: usize = 32;
+        let mut vertices = Vec::with_capacity((SEGMENTS + 2) * 3);
+        
+        // Center vertex
+        vertices.push(ShapeVertex {
+            position: [center.x, center.y],
+        });
+
+        // Generate circle points
+        for i in 0..=SEGMENTS {
+            let angle = (i as f32 / SEGMENTS as f32) * std::f32::consts::TAU;
+            vertices.push(ShapeVertex {
+                position: [center.x + radius * angle.cos(), center.y + radius * angle.sin()],
+            });
+        }
+
+        // Create triangles (fan from center)
+        let mut triangles = Vec::with_capacity(SEGMENTS * 3);
+        for i in 0..SEGMENTS {
+            triangles.push(ShapeVertex {
+                position: vertices[0].position,
+            });
+            triangles.push(vertices[i + 1]);
+            triangles.push(vertices[i + 2]);
+        }
+
+        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("circle-vertices"),
+            contents: bytemuck::cast_slice(&triangles),
+            usage: BufferUsages::VERTEX,
+        });
+
+        // Create MVP matrix
+        let vp = camera.view_projection(self.surface_config.width, self.surface_config.height);
+        let mvp = vp.to_cols_array_2d();
+
+        let uniforms = ShapeUniforms { mvp, color };
+
+        // Write uniforms
+        self.queue.write_buffer(
+            &self.shape_pipeline.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
+
+        // Create bind group
+        let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("shape-bind-group"),
+            layout: &self.shape_pipeline.bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &self.shape_pipeline.uniform_buffer,
+                    offset: 0,
+                    size: std::num::NonZeroU64::new(std::mem::size_of::<ShapeUniforms>() as u64),
+                }),
+            }],
+        });
+
+        // Draw in a render pass
+        let encoder = frame
+            .encoder
+            .as_mut()
+            .ok_or_else(|| anyhow!("Frame already ended"))?;
+
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("shape-pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &frame.view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            multiview_mask: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+
+        pass.set_pipeline(&self.shape_pipeline.pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        pass.draw(0..triangles.len() as u32, 0..1);
+
+        drop(pass);
+
+        Ok(())
+    }
+
+    /// Triangulate a polygon using ear clipping algorithm
+    fn triangulate_polygon(&self, points: &[Vec2]) -> Vec<(usize, usize, usize)> {
+        if points.len() < 3 {
+            return Vec::new();
+        }
+
+        // For simple convex polygons, use fan triangulation
+        // For more complex cases, we'd use ear clipping, but fan works for most game cases
+        let mut triangles = Vec::new();
+        for i in 1..(points.len() - 1) {
+            triangles.push((0, i, i + 1));
+        }
+        triangles
+    }
 }
 
 fn create_sprite_pipeline(device: &wgpu::Device, surface_format: TextureFormat) -> SpritePipeline {
@@ -895,7 +1229,7 @@ fn create_sprite_pipeline(device: &wgpu::Device, surface_format: TextureFormat) 
     let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
         label: Some("sprite-pipeline-layout"),
         bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
+        immediate_size: 0,
     });
 
     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -922,26 +1256,29 @@ fn create_sprite_pipeline(device: &wgpu::Device, surface_format: TextureFormat) 
         layout: Some(&pipeline_layout),
         vertex: VertexState {
             module: &shader,
-            entry_point: "vs_main",
+            entry_point: Some("vs_main"),
             buffers: &[wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<SpriteVertex>() as wgpu::BufferAddress,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &vertex_attr_array![0 => Float32x2, 1 => Float32x2],
             }],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         fragment: Some(FragmentState {
             module: &shader,
-            entry_point: "fs_main",
+            entry_point: Some("fs_main"),
             targets: &[Some(ColorTargetState {
                 format: surface_format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: ColorWrites::ALL,
             })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         }),
         primitive: PrimitiveState::default(),
         depth_stencil: None,
         multisample: MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
+        cache: None,
     });
 
     SpritePipeline {
@@ -976,4 +1313,89 @@ fn choose_alpha_mode(modes: &[CompositeAlphaMode]) -> CompositeAlphaMode {
         .copied()
         .find(|mode| matches!(mode, CompositeAlphaMode::Auto))
         .unwrap_or_else(|| modes.first().copied().unwrap_or(CompositeAlphaMode::Opaque))
+}
+
+fn create_shape_pipeline(device: &wgpu::Device, surface_format: TextureFormat) -> ShapePipeline {
+    let shader = device.create_shader_module(ShaderModuleDescriptor {
+        label: Some("shape-shader"),
+        source: ShaderSource::Wgsl(include_str!("shape.wgsl").into()),
+    });
+
+    let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: Some("shape-bind-group-layout"),
+        entries: &[BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+            ty: BindingType::Buffer {
+                ty: BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: std::num::NonZeroU64::new(
+                    std::mem::size_of::<ShapeUniforms>() as u64,
+                ),
+            },
+            count: None,
+        }],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+        label: Some("shape-pipeline-layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        immediate_size: 0,
+    });
+
+    let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
+    let uniform_size = std::mem::size_of::<ShapeUniforms>() as u64;
+    let aligned_uniform_size = (uniform_size + uniform_alignment - 1) & !(uniform_alignment - 1);
+
+    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("shape-uniform-buffer"),
+        size: aligned_uniform_size,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: Some("shape-pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<ShapeVertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &vertex_attr_array![0 => Float32x2],
+            }],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    ShapePipeline {
+        pipeline,
+        bind_group_layout,
+        uniform_buffer,
+        uniform_alignment,
+    }
 }

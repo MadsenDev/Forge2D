@@ -9,6 +9,9 @@ members = [
     "examples/platformer_demo",
     "examples/grid_demo",
     "examples/performance_demo",
+    "examples/age_of_empires_demo",
+    "examples/asteroids_demo",
+    "examples/simple_test",
     "editor",
 ]
 resolver = "2"
@@ -22,8 +25,8 @@ license = "MIT OR Apache-2.0"
 anyhow = "1"
 log = "0.4"
 thiserror = "1"
-winit = "0.28"
-wgpu = "0.17"
+winit = "0.30"
+wgpu = "28"
 pollster = "0.3"
 bytemuck = { version = "1", features = ["derive"] }
 glam = "0.24"

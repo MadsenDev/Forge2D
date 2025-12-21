@@ -1,0 +1,13 @@
+[package]
+name = "simple_test"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "simple_test"
+path = "src/main.rs"
+
+[dependencies]
+forge2d = { path = "../../forge2d" }
+anyhow = "1.0"
+

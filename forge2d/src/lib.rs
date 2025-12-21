@@ -26,7 +26,7 @@ pub use crate::assets::AssetManager;
 pub use crate::audio::AudioSystem;
 pub use crate::engine::{Engine, EngineConfig, EngineContext, Game};
 pub use crate::fonts::BuiltinFont;
-pub use crate::hud::{HudLayer, HudRect, HudSprite, HudText};
+pub use crate::hud::{HudLayer, HudLayout, HudPanel, HudRect, HudSprite, HudText, TextAlign};
 pub use crate::input::{ActionId, AxisBinding, Button, InputMap, InputState};
 pub use crate::camera::{CameraFollow, update_camera_follow};
 pub use crate::entities::{
@@ -46,4 +46,7 @@ pub use crate::commands::{Command, CommandHistory, CreateEntity, DeleteEntity, S
 pub use crate::component_metadata::{ComponentMetadataHandler, ComponentMetadataRegistry, FieldDescriptor, TransformMetadataHandler, register_builtin_metadata};
 pub use crate::hierarchy::{get_parent, set_parent, get_children, get_root, get_world_position, get_world_rotation, get_world_scale, reparent};
 pub use crate::scene::{Scene, SerializableComponent, SerializablePhysics, ComponentSerializable, create_scene, restore_scene_physics, restore_scene_physics_preserve};
-pub use winit::event::{MouseButton, VirtualKeyCode};
+pub use winit::{
+    event::MouseButton,
+    keyboard::KeyCode,
+};

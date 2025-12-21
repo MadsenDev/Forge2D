@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use forge2d::{
     ActionId, AxisBinding, Button, BuiltinFont, Camera2D, Engine, EngineContext, FontHandle, Game,
-    InputMap, MouseButton, Sprite, Vec2, VirtualKeyCode,
+    InputMap, MouseButton, Sprite, Vec2, KeyCode,
 };
 
 // Embedded texture: neutral white square (32x32). We tint per-sprite.
@@ -81,12 +81,12 @@ impl Game for BasicGame {
             self.axis_horizontal.clone(),
             AxisBinding::new(
                 vec![
-                    Button::Key(VirtualKeyCode::A),
-                    Button::Key(VirtualKeyCode::Left),
+                    Button::Key(KeyCode::KeyA),
+                    Button::Key(KeyCode::ArrowLeft),
                 ],
                 vec![
-                    Button::Key(VirtualKeyCode::D),
-                    Button::Key(VirtualKeyCode::Right),
+                    Button::Key(KeyCode::KeyD),
+                    Button::Key(KeyCode::ArrowRight),
                 ],
             ),
         );
@@ -95,12 +95,12 @@ impl Game for BasicGame {
             self.axis_vertical.clone(),
             AxisBinding::new(
                 vec![
-                    Button::Key(VirtualKeyCode::W),
-                    Button::Key(VirtualKeyCode::Up),
+                    Button::Key(KeyCode::KeyW),
+                    Button::Key(KeyCode::ArrowUp),
                 ],
                 vec![
-                    Button::Key(VirtualKeyCode::S),
-                    Button::Key(VirtualKeyCode::Down),
+                    Button::Key(KeyCode::KeyS),
+                    Button::Key(KeyCode::ArrowDown),
                 ],
             ),
         );
@@ -239,7 +239,7 @@ impl Game for BasicGame {
         let dt = ctx.delta_time().as_secs_f32();
         
         // Exit on ESC
-        if ctx.input().is_key_pressed(VirtualKeyCode::Escape) {
+        if ctx.input().is_key_pressed(KeyCode::Escape) {
             ctx.request_exit();
         }
 

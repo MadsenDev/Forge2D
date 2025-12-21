@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use winit::event::{ElementState, KeyboardInput, MouseButton, VirtualKeyCode};
+use winit::{
+    event::{ElementState, KeyEvent, MouseButton},
+    keyboard::KeyCode,
+};
 
 /// Tracks keyboard and mouse state across frames.
 pub struct InputState {
@@ -38,11 +41,11 @@ impl InputState {
     }
 
     /// Handle a keyboard input event from winit.
-    pub fn handle_key(&mut self, input: KeyboardInput) {
-        if let Some(keycode) = input.virtual_keycode {
+    pub fn handle_key(&mut self, event: &KeyEvent) {
+        if let winit::keyboard::PhysicalKey::Code(keycode) = event.physical_key {
             let idx = keycode as usize;
             if idx < self.keys_down.len() {
-                match input.state {
+                match event.state {
                     ElementState::Pressed => {
                         if !self.keys_down[idx] {
                             self.keys_pressed[idx] = true;
@@ -83,7 +86,7 @@ impl InputState {
     }
 
     /// Returns true if the key is currently held down.
-    pub fn is_key_down(&self, key: VirtualKeyCode) -> bool {
+    pub fn is_key_down(&self, key: KeyCode) -> bool {
         let idx = key as usize;
         if idx < self.keys_down.len() {
             self.keys_down[idx]
@@ -93,7 +96,7 @@ impl InputState {
     }
 
     /// Returns true if the key was pressed this frame.
-    pub fn is_key_pressed(&self, key: VirtualKeyCode) -> bool {
+    pub fn is_key_pressed(&self, key: KeyCode) -> bool {
         let idx = key as usize;
         if idx < self.keys_pressed.len() {
             self.keys_pressed[idx]
@@ -103,7 +106,7 @@ impl InputState {
     }
 
     /// Returns true if the key was released this frame.
-    pub fn is_key_released(&self, key: VirtualKeyCode) -> bool {
+    pub fn is_key_released(&self, key: KeyCode) -> bool {
         let idx = key as usize;
         if idx < self.keys_released.len() {
             self.keys_released[idx]
@@ -169,7 +172,7 @@ impl ActionId {
 /// A physical button that can be bound to an action or axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Button {
-    Key(VirtualKeyCode),
+    Key(KeyCode),
     Mouse(MouseButton),
 }
 
@@ -226,7 +229,7 @@ impl InputMap {
     }
 
     /// Bind a key to an action.
-    pub fn bind_key(&mut self, action: ActionId, key: VirtualKeyCode) {
+    pub fn bind_key(&mut self, action: ActionId, key: KeyCode) {
         self.actions.entry(action).or_default().push(Button::Key(key));
     }
 
@@ -284,9 +287,11 @@ fn mouse_button_index(button: MouseButton) -> Option<usize> {
         MouseButton::Left => Some(0),
         MouseButton::Right => Some(1),
         MouseButton::Middle => Some(2),
+        MouseButton::Back => Some(3),
+        MouseButton::Forward => Some(4),
         MouseButton::Other(raw) => {
             let idx = raw as usize;
-            let mapped = 3 + idx; // Reserve 0-2 for Left/Right/Middle
+            let mapped = 5 + idx; // Reserve 0-4 for standard buttons
             (mapped < 8).then_some(mapped)
         }
     }

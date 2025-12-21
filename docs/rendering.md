@@ -317,3 +317,112 @@ sprite.tint = [1.0, 0.0, 0.0, 1.0];
 sprite.tint = [1.0, 1.0, 1.0, 0.5];
 ```
 
+## Vector Shape Rendering
+
+Forge2D provides GPU-accelerated vector shape drawing for lines, circles, and polygons. These are useful for procedural graphics, debug visualization, and games that work well with geometric shapes.
+
+### Drawing Lines
+
+```rust
+renderer.draw_line(
+    &mut frame,
+    Vec2::new(0.0, 0.0),        // Start position
+    Vec2::new(100.0, 100.0),    // End position
+    2.0,                        // Line width in pixels
+    [1.0, 1.0, 1.0, 1.0],      // RGBA color
+    &camera,
+)?;
+```
+
+### Drawing Circles
+
+```rust
+renderer.draw_circle(
+    &mut frame,
+    Vec2::new(200.0, 200.0),   // Center position
+    50.0,                       // Radius in pixels
+    [1.0, 0.0, 0.0, 1.0],      // RGBA color (red)
+    &camera,
+)?;
+```
+
+### Drawing Polygons
+
+```rust
+// Create a triangle
+let triangle_points = vec![
+    Vec2::new(0.0, -20.0),     // Top point
+    Vec2::new(-20.0, 20.0),    // Bottom left
+    Vec2::new(20.0, 20.0),     // Bottom right
+];
+
+renderer.draw_polygon(
+    &mut frame,
+    &triangle_points,
+    [1.0, 1.0, 1.0, 1.0],      // RGBA color
+    &camera,
+)?;
+```
+
+### Vector Shape Notes
+
+- **Polygon Triangulation**: Polygons are rendered using fan triangulation from the center point. This means:
+  - **Convex polygons work perfectly** - All points should be on the boundary of a convex shape
+  - **Concave polygons may render incorrectly** - Lines may appear going to the center, creating unwanted visual artifacts
+  - **Point Order**: Points should be provided in counter-clockwise order around the shape
+  - **Known Bug**: Concave polygons with deep indentations can cause rendering issues where lines appear to go to the center. For best results, ensure polygons are convex or have minimal concavity.
+
+- **Performance**: Vector shapes are GPU-accelerated and batched automatically
+- **Coordinate System**: All positions are in world coordinates (affected by camera)
+- **Color**: RGBA values range from 0.0 to 1.0
+
+### Example: Drawing a Ship
+
+```rust
+fn draw_ship(&self, renderer: &mut Renderer, frame: &mut Frame, 
+             position: Vec2, rotation: f32, camera: &Camera2D) -> Result<()> {
+    // Create triangle pointing up
+    let size = 20.0;
+    let mut points = vec![
+        Vec2::new(0.0, -size),           // Front point
+        Vec2::new(-size * 0.7, size),    // Back left
+        Vec2::new(size * 0.7, size),     // Back right
+    ];
+    
+    // Rotate points
+    let cos = rotation.cos();
+    let sin = rotation.sin();
+    for point in &mut points {
+        let rotated = Vec2::new(
+            point.x * cos - point.y * sin,
+            point.x * sin + point.y * cos,
+        );
+        *point = position + rotated;
+    }
+    
+    renderer.draw_polygon(frame, &points, [1.0, 1.0, 1.0, 1.0], camera)?;
+    Ok(())
+}
+```
+
+### Example: Drawing Asteroids
+
+```rust
+fn draw_asteroid(&self, renderer: &mut Renderer, frame: &mut Frame,
+                 center: Vec2, radius: f32, camera: &Camera2D) -> Result<()> {
+    // Generate points around a circle with variation
+    const POINTS: usize = 10;
+    let mut points = Vec::with_capacity(POINTS);
+    
+    for i in 0..POINTS {
+        let angle = (i as f32 / POINTS as f32) * std::f32::consts::TAU;
+        // Add some variation (keep it convex: 80-100% of radius)
+        let r = radius * (0.8 + (i as f32 * 0.1) % 0.2);
+        points.push(center + Vec2::new(r * angle.cos(), r * angle.sin()));
+    }
+    
+    renderer.draw_polygon(frame, &points, [0.8, 0.8, 0.8, 1.0], camera)?;
+    Ok(())
+}
+```
+

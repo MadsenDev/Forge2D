@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use winit::{
     dpi::{LogicalSize, PhysicalSize},
-    event::{ElementState, Event, KeyboardInput, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    platform::run_return::EventLoopExtRunReturn,
-    window::WindowBuilder,
+    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event_loop::EventLoop,
+    keyboard::{KeyCode, PhysicalKey},
+    window::Window,
 };
 
 use crate::{assets::AssetManager, audio::AudioSystem, input::InputState, render::Renderer};
@@ -70,23 +70,21 @@ impl Engine {
     pub fn run<G: Game + 'static>(self, mut game: G) -> Result<()> {
         let config = self.config;
 
-        let mut event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
-            .with_title(config.title.clone())
-            .with_inner_size(LogicalSize::new(config.width, config.height))
-            .build(&event_loop)?;
+        let event_loop = EventLoop::new()?;
+        let mut window_attributes = Window::default_attributes();
+        window_attributes.title = config.title.clone();
+        window_attributes.inner_size = Some(LogicalSize::new(config.width, config.height).into());
+        let window = event_loop.create_window(window_attributes)?;
+
+        // Leak the window to get a 'static reference
+        // This is safe because the window lives for the entire program duration
+        let window: &'static Window = Box::leak(Box::new(window));
 
         let mut ctx = EngineContext::new(window, &config)?;
         game.init(&mut ctx)?;
 
         let mut last_frame = Instant::now();
-        let mut pending_error: Option<anyhow::Error> = None;
-
-        event_loop.run_return(|event, _, control_flow| {
-            // Use Wait by default for better CPU efficiency
-            // Switch to Poll only when actively rendering/updating
-            *control_flow = ControlFlow::Wait;
-
+        event_loop.run(move |event, elwt| {
             match event {
                 Event::NewEvents(_) => {
                     ctx.begin_frame();
@@ -96,90 +94,84 @@ impl Engine {
 
                     match event {
                         WindowEvent::CloseRequested => {
-                            *control_flow = ControlFlow::Exit;
+                            elwt.exit();
                         }
-                        WindowEvent::KeyboardInput { ref input, .. } => {
-                            if is_escape_pressed(input) {
-                                *control_flow = ControlFlow::Exit;
+                        WindowEvent::KeyboardInput { event, .. } => {
+                            if is_escape_pressed(&event) {
+                                elwt.exit();
                             }
                         }
                         WindowEvent::Resized(new_size) => {
                             ctx.resize_renderer(new_size);
                         }
-                        WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                            ctx.resize_renderer(*new_inner_size);
+                        WindowEvent::ScaleFactorChanged { .. } => {
+                            // Note: The actual resize will come through Resized event
+                        }
+                        WindowEvent::RedrawRequested => {
+                            if let Err(_err) = game.draw(&mut ctx) {
+                                // Error handling: log and exit
+                                elwt.exit();
+                                return;
+                            }
+
+                            if ctx.exit_requested {
+                                elwt.exit();
+                            }
                         }
                         _ => {}
                     }
                 }
-                Event::MainEventsCleared => {
+                Event::AboutToWait => {
                     let now = Instant::now();
                     ctx.update_time(now - last_frame);
                     last_frame = now;
 
-                    if let Err(err) = game.update(&mut ctx) {
-                        pending_error = Some(err);
-                        *control_flow = ControlFlow::Exit;
+                    if let Err(_err) = game.update(&mut ctx) {
+                        // Error handling: log and exit
+                        elwt.exit();
                         return;
                     }
 
                     if ctx.exit_requested {
-                        *control_flow = ControlFlow::Exit;
+                        elwt.exit();
                         return;
                     }
 
                     ctx.window.request_redraw();
-                    // Request immediate processing for next frame
-                    *control_flow = ControlFlow::Poll;
-                }
-                Event::RedrawRequested(_) => {
-                    if let Err(err) = game.draw(&mut ctx) {
-                        pending_error = Some(err);
-                        *control_flow = ControlFlow::Exit;
-                        return;
-                    }
-
-                    if ctx.exit_requested {
-                        *control_flow = ControlFlow::Exit;
-                    }
                 }
                 _ => {}
             }
-        });
+        })?;
 
-        if let Some(err) = pending_error {
-            Err(err)
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
 }
 
-fn is_escape_pressed(input: &KeyboardInput) -> bool {
-    input.state == ElementState::Pressed
+fn is_escape_pressed(event: &KeyEvent) -> bool {
+    event.state == ElementState::Pressed
         && matches!(
-            input.virtual_keycode,
-            Some(winit::event::VirtualKeyCode::Escape)
+            event.physical_key,
+            PhysicalKey::Code(KeyCode::Escape)
         )
 }
 
 /// Shared context provided to game code each frame.
-pub struct EngineContext {
-    window: winit::window::Window,
+pub struct EngineContext<'window> {
+    window: &'window winit::window::Window,
     delta_time: Duration,
     elapsed_time: Duration,
     fixed_delta_time: Duration,
     fixed_time_accumulator: Duration,
     exit_requested: bool,
     input: InputState,
-    renderer: Renderer,
+    renderer: Renderer<'window>,
     assets: AssetManager,
     audio: AudioSystem,
 }
 
-impl EngineContext {
-    fn new(window: winit::window::Window, config: &EngineConfig) -> Result<Self> {
-        let renderer = Renderer::new(&window, config.vsync)?;
+impl<'window> EngineContext<'window> {
+    fn new(window: &'window winit::window::Window, config: &EngineConfig) -> Result<Self> {
+        let renderer = Renderer::new(window, config.vsync)?;
         // Audio initialization is graceful - engine continues even if audio fails
         let audio = AudioSystem::new()?;
 
@@ -210,7 +202,7 @@ impl EngineContext {
 
     fn handle_window_event(&mut self, event: &WindowEvent) {
         match event {
-            WindowEvent::KeyboardInput { input, .. } => self.input.handle_key(*input),
+            WindowEvent::KeyboardInput { event, .. } => self.input.handle_key(event),
             WindowEvent::MouseInput { state, button, .. } => {
                 self.input.handle_mouse_button(*button, *state)
             }
@@ -293,7 +285,7 @@ impl EngineContext {
     }
 
     /// Access the renderer for drawing operations.
-    pub fn renderer(&mut self) -> &mut Renderer {
+    pub fn renderer(&mut self) -> &mut Renderer<'window> {
         &mut self.renderer
     }
 
@@ -369,21 +361,21 @@ impl EngineContext {
 /// Trait implemented by user code to hook into the engine lifecycle.
 pub trait Game {
     /// Called once after the window is created but before the first frame.
-    fn init(&mut self, _ctx: &mut EngineContext) -> Result<()> {
+    fn init(&mut self, _ctx: &mut EngineContext<'_>) -> Result<()> {
         Ok(())
     }
 
     /// Update game state. Called once per frame before drawing.
-    fn update(&mut self, ctx: &mut EngineContext) -> Result<()>;
+    fn update(&mut self, ctx: &mut EngineContext<'_>) -> Result<()>;
 
     /// Draw the current frame. Called after update when a redraw is requested.
-    fn draw(&mut self, ctx: &mut EngineContext) -> Result<()>;
+    fn draw(&mut self, ctx: &mut EngineContext<'_>) -> Result<()>;
 }
 
 /// Adapter to use StateMachine as a Game.
 /// This allows StateMachine to be used directly with Engine::run().
 impl Game for crate::state::StateMachine {
-    fn init(&mut self, ctx: &mut EngineContext) -> Result<()> {
+    fn init(&mut self, ctx: &mut EngineContext<'_>) -> Result<()> {
         // Call on_enter for the initial state (if any)
         self.init_top_state(ctx)?;
         // Apply any initial state transitions
@@ -391,7 +383,7 @@ impl Game for crate::state::StateMachine {
         Ok(())
     }
 
-    fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
+    fn update(&mut self, ctx: &mut EngineContext<'_>) -> Result<()> {
         // Apply pending state transitions first
         self.apply_transitions(ctx)?;
 
@@ -402,7 +394,7 @@ impl Game for crate::state::StateMachine {
         Ok(())
     }
 
-    fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
+    fn draw(&mut self, ctx: &mut EngineContext<'_>) -> Result<()> {
         let renderer = ctx.renderer();
         let mut frame = renderer.begin_frame()?;
         

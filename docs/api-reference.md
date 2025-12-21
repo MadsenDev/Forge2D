@@ -85,6 +85,9 @@ impl Renderer {
     pub fn clear(&mut self, frame: &mut Frame, color: [f32; 4]) -> Result<()>;
     pub fn draw_sprite(&mut self, frame: &mut Frame, sprite: &Sprite, camera: &Camera2D) -> Result<()>;
     pub fn draw_text(&mut self, frame: &mut Frame, text: &str, font: FontHandle, size: f32, position: Vec2, color: [f32; 4], camera: &Camera2D) -> Result<()>;
+    pub fn draw_line(&mut self, frame: &mut Frame, start: Vec2, end: Vec2, width: f32, color: [f32; 4], camera: &Camera2D) -> Result<()>;
+    pub fn draw_circle(&mut self, frame: &mut Frame, center: Vec2, radius: f32, color: [f32; 4], camera: &Camera2D) -> Result<()>;
+    pub fn draw_polygon(&mut self, frame: &mut Frame, points: &[Vec2], color: [f32; 4], camera: &Camera2D) -> Result<()>;
     pub fn load_texture_from_file(&mut self, path: &str) -> Result<TextureHandle>;
     pub fn load_texture_from_bytes(&mut self, bytes: &[u8]) -> Result<TextureHandle>;
     pub fn load_font_from_bytes(&mut self, bytes: &[u8]) -> Result<FontHandle>;

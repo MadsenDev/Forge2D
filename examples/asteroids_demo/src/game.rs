@@ -1,0 +1,475 @@
+use anyhow::Result;
+use forge2d::{
+    BuiltinFont, Camera2D, EngineContext, FontHandle, Game, HudLayer, HudText, Sprite,
+    Vec2, KeyCode,
+};
+
+use crate::entities::{Asteroid, AsteroidSize, Bullet, Player};
+
+pub struct AsteroidsGame {
+    // Camera
+    camera: Camera2D,
+    
+    // Screen bounds
+    screen_width: f32,
+    screen_height: f32,
+    
+    // No longer need textures - using vector shapes!
+    
+    // Font
+    font: Option<FontHandle>,
+    
+    // Game entities
+    player: Option<Player>,
+    bullets: Vec<Bullet>,
+    asteroids: Vec<Asteroid>,
+    
+    // Game state
+    score: u32,
+    lives: u32,
+    game_over: bool,
+    
+    // Timing
+    shoot_cooldown: f32,
+    asteroid_spawn_timer: f32,
+    
+    // HUD
+    hud: HudLayer,
+}
+
+impl AsteroidsGame {
+    pub fn new() -> Self {
+        Self {
+            camera: Camera2D::default(),
+            screen_width: 1280.0,
+            screen_height: 720.0,
+            font: None,
+            player: None,
+            bullets: Vec::new(),
+            asteroids: Vec::new(),
+            score: 0,
+            lives: 3,
+            game_over: false,
+            shoot_cooldown: 0.0,
+            asteroid_spawn_timer: 0.0,
+            hud: HudLayer::new(),
+        }
+    }
+    
+    fn spawn_player(&mut self, renderer: &mut forge2d::Renderer) {
+        // Create a dummy sprite for the player (we'll draw it as a polygon)
+        let dummy_data = vec![255u8, 255, 255, 255];
+        let dummy_texture = renderer.load_texture_from_rgba(&dummy_data, 1, 1).unwrap();
+        let mut sprite = Sprite::new(dummy_texture);
+        sprite.transform.position = Vec2::new(self.screen_width * 0.5, self.screen_height * 0.5);
+        // Set size to match the ship triangle size (about 40x40 pixels)
+        sprite.set_size_px(Vec2::new(40.0, 40.0), Vec2::new(1.0, 1.0));
+        sprite.tint = [1.0, 1.0, 1.0, 1.0];
+        self.player = Some(Player::new(sprite));
+    }
+    
+    fn spawn_asteroid(&mut self, renderer: &mut forge2d::Renderer, size: AsteroidSize, position: Option<Vec2>) {
+        let pos = position.unwrap_or_else(|| {
+            // Spawn at edge of screen
+            let side = fastrand::u8(0..4);
+            match side {
+                0 => Vec2::new(0.0, fastrand::f32() * self.screen_height), // Left
+                1 => Vec2::new(self.screen_width, fastrand::f32() * self.screen_height), // Right
+                2 => Vec2::new(fastrand::f32() * self.screen_width, 0.0), // Top
+                _ => Vec2::new(fastrand::f32() * self.screen_width, self.screen_height), // Bottom
+            }
+        });
+        
+        // Create a dummy sprite (we'll draw it as a polygon)
+        let dummy_data = vec![200u8, 200, 200, 255];
+        let dummy_texture = renderer.load_texture_from_rgba(&dummy_data, 1, 1).unwrap();
+        let mut sprite = Sprite::new(dummy_texture);
+        sprite.transform.position = pos;
+        // Set size based on asteroid size
+        let asteroid_size = match size {
+            AsteroidSize::Large => 80.0,
+            AsteroidSize::Medium => 50.0,
+            AsteroidSize::Small => 30.0,
+        };
+        sprite.set_size_px(Vec2::new(asteroid_size, asteroid_size), Vec2::new(1.0, 1.0));
+        sprite.tint = [0.8, 0.8, 0.8, 1.0];
+        
+        let asteroid = Asteroid::new(sprite, pos, size);
+        self.asteroids.push(asteroid);
+    }
+    
+    fn get_ship_points(&self, player: &Player) -> Vec<Vec2> {
+        // Local ship model: nose points RIGHT (matching Vec2::from_angle(0) = (1, 0))
+        // In screen coordinates, this means the ship points right when rotation = 0
+        let size = 20.0;
+        let points = vec![
+            Vec2::new(size, 0.0),            // Nose (forward, pointing right)
+            Vec2::new(-size * 0.7, -size),   // Back-left
+            Vec2::new(-size * 0.7, size),    // Back-right
+        ];
+        
+        // Rotate and translate points using player's rotation
+        // No offset needed - polygon matches Vec2::from_angle() coordinate system
+        let cos = player.rotation.cos();
+        let sin = player.rotation.sin();
+        points.iter().map(|&p| {
+            let rotated = Vec2::new(
+                p.x * cos - p.y * sin,
+                p.x * sin + p.y * cos,
+            );
+            player.sprite.transform.position + rotated
+        }).collect()
+    }
+    
+    fn get_asteroid_points(&self, asteroid: &Asteroid) -> Vec<Vec2> {
+        // Use pre-computed shape offsets and apply rotation + position
+        let cos = asteroid.rotation.cos();
+        let sin = asteroid.rotation.sin();
+        
+        asteroid.shape_offsets.iter().map(|&offset| {
+            // Rotate offset by asteroid rotation
+            let rotated = Vec2::new(
+                offset.x * cos - offset.y * sin,
+                offset.x * sin + offset.y * cos,
+            );
+            asteroid.sprite.transform.position + rotated
+        }).collect()
+    }
+    
+    
+    fn check_collision_circle_circle(pos1: Vec2, radius1: f32, pos2: Vec2, radius2: f32) -> bool {
+        let dist_sq = pos1.distance_squared(pos2);
+        let radius_sum = radius1 + radius2;
+        dist_sq < radius_sum * radius_sum
+    }
+}
+
+impl Game for AsteroidsGame {
+    fn init(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        let (w, h) = ctx.renderer().surface_size();
+        self.screen_width = w as f32;
+        self.screen_height = h as f32;
+        
+        // Set camera position so that (0,0) is at top-left of screen
+        // Camera position represents the center of the view, so we offset by half screen size
+        self.camera.position = Vec2::new(self.screen_width * 0.5, self.screen_height * 0.5);
+        
+        // Load font (no textures needed - using vector shapes!)
+        self.font = Some(ctx.builtin_font(BuiltinFont::Ui)?);
+        
+        // Spawn player
+        self.spawn_player(ctx.renderer());
+        
+        // Spawn initial asteroids
+        for _ in 0..4 {
+            self.spawn_asteroid(ctx.renderer(), AsteroidSize::Large, None);
+        }
+        
+        Ok(())
+    }
+    
+    fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        let dt = ctx.delta_time().as_secs_f32();
+        
+        if self.game_over {
+            let input = ctx.input();
+            if input.is_key_pressed(KeyCode::KeyR) {
+                // Restart game
+                self.score = 0;
+                self.lives = 3;
+                self.game_over = false;
+                self.bullets.clear();
+                self.asteroids.clear();
+                self.spawn_player(ctx.renderer());
+                for _ in 0..4 {
+                    self.spawn_asteroid(ctx.renderer(), AsteroidSize::Large, None);
+                }
+            }
+            return Ok(());
+        }
+        
+        // Update timers
+        if self.shoot_cooldown > 0.0 {
+            self.shoot_cooldown -= dt;
+        }
+        self.asteroid_spawn_timer += dt;
+        
+        // Spawn asteroids periodically (get renderer before input to avoid borrow conflicts)
+        if self.asteroid_spawn_timer >= 5.0 && self.asteroids.len() < 10 {
+            self.spawn_asteroid(ctx.renderer(), AsteroidSize::Large, None);
+            self.asteroid_spawn_timer = 0.0;
+        }
+        
+        let input = ctx.input();
+        
+        // Update player
+        if let Some(ref mut player) = self.player {
+            // Rotation
+            if input.is_key_down(KeyCode::KeyA) || input.is_key_down(KeyCode::ArrowLeft) {
+                player.rotation -= player.rotation_speed * dt;
+            }
+            if input.is_key_down(KeyCode::KeyD) || input.is_key_down(KeyCode::ArrowRight) {
+                player.rotation += player.rotation_speed * dt;
+            }
+            
+            // Thrust
+            if input.is_key_down(KeyCode::KeyW) || input.is_key_down(KeyCode::ArrowUp) {
+                let thrust_dir = Vec2::from_angle(player.rotation);
+                player.velocity += thrust_dir * player.thrust_power * dt;
+            }
+            
+            // Apply friction
+            player.velocity *= player.friction;
+            
+            // Limit speed
+            if player.velocity.length() > player.max_speed {
+                player.velocity = player.velocity.normalized() * player.max_speed;
+            }
+            
+            // Update position
+            player.sprite.transform.position += player.velocity * dt;
+            player.sprite.transform.rotation = player.rotation;
+            
+            // Wrap position (inline to avoid borrow checker issues)
+            let screen_w = self.screen_width;
+            let screen_h = self.screen_height;
+            if player.sprite.transform.position.x < 0.0 {
+                player.sprite.transform.position.x = screen_w;
+            } else if player.sprite.transform.position.x > screen_w {
+                player.sprite.transform.position.x = 0.0;
+            }
+            if player.sprite.transform.position.y < 0.0 {
+                player.sprite.transform.position.y = screen_h;
+            } else if player.sprite.transform.position.y > screen_h {
+                player.sprite.transform.position.y = 0.0;
+            }
+            
+            // Shooting
+            if (input.is_key_down(KeyCode::Space) || input.is_key_pressed(KeyCode::Space)) 
+                && self.shoot_cooldown <= 0.0 {
+                let bullet_pos = player.sprite.transform.position;
+                let bullet_dir = Vec2::from_angle(player.rotation);
+                // Create a dummy sprite (we'll draw bullets as circles)
+                let dummy_data = vec![255u8, 255, 255, 255];
+                let dummy_texture = ctx.renderer().load_texture_from_rgba(&dummy_data, 1, 1)?;
+                let mut bullet_sprite = Sprite::new(dummy_texture);
+                bullet_sprite.transform.position = bullet_pos + bullet_dir * 25.0; // Spawn in front of ship
+                // Set size to 6x6 pixels (radius 3.0 * 2)
+                bullet_sprite.set_size_px(Vec2::new(6.0, 6.0), Vec2::new(1.0, 1.0));
+                bullet_sprite.tint = [1.0, 1.0, 1.0, 1.0];
+                
+                let bullet = Bullet::new(bullet_sprite, bullet_pos + bullet_dir * 25.0, bullet_dir, 400.0);
+                self.bullets.push(bullet);
+                self.shoot_cooldown = 0.2; // 5 shots per second
+            }
+        }
+        
+        // Update bullets
+        let screen_w = self.screen_width;
+        let screen_h = self.screen_height;
+        for bullet in &mut self.bullets {
+            bullet.sprite.transform.position += bullet.velocity * dt;
+            // Wrap position (inline to avoid borrow checker issues)
+            if bullet.sprite.transform.position.x < 0.0 {
+                bullet.sprite.transform.position.x = screen_w;
+            } else if bullet.sprite.transform.position.x > screen_w {
+                bullet.sprite.transform.position.x = 0.0;
+            }
+            if bullet.sprite.transform.position.y < 0.0 {
+                bullet.sprite.transform.position.y = screen_h;
+            } else if bullet.sprite.transform.position.y > screen_h {
+                bullet.sprite.transform.position.y = 0.0;
+            }
+            bullet.lifetime -= dt;
+        }
+        self.bullets.retain(|b| b.lifetime > 0.0);
+        
+        // Update asteroids
+        for asteroid in &mut self.asteroids {
+            asteroid.sprite.transform.position += asteroid.velocity * dt;
+            // Wrap position (inline to avoid borrow checker issues)
+            if asteroid.sprite.transform.position.x < 0.0 {
+                asteroid.sprite.transform.position.x = screen_w;
+            } else if asteroid.sprite.transform.position.x > screen_w {
+                asteroid.sprite.transform.position.x = 0.0;
+            }
+            if asteroid.sprite.transform.position.y < 0.0 {
+                asteroid.sprite.transform.position.y = screen_h;
+            } else if asteroid.sprite.transform.position.y > screen_h {
+                asteroid.sprite.transform.position.y = 0.0;
+            }
+            asteroid.rotation += asteroid.rotation_speed * dt;
+            asteroid.sprite.transform.rotation = asteroid.rotation;
+        }
+        
+        // Bullet-Asteroid collisions
+        let mut bullets_to_remove = Vec::new();
+        let mut asteroids_to_remove = Vec::new();
+        let mut new_asteroids = Vec::new();
+        
+        for (bullet_idx, bullet) in self.bullets.iter().enumerate() {
+            for (asteroid_idx, asteroid) in self.asteroids.iter().enumerate() {
+                if Self::check_collision_circle_circle(
+                    bullet.sprite.transform.position,
+                    4.0, // bullet radius
+                    asteroid.sprite.transform.position,
+                    asteroid.radius(),
+                ) {
+                    bullets_to_remove.push(bullet_idx);
+                    asteroids_to_remove.push(asteroid_idx);
+                    
+                    // Break asteroid into smaller pieces
+                    match asteroid.size {
+                        AsteroidSize::Large => {
+                            // Spawn 2 medium asteroids
+                            for _ in 0..2 {
+                                let dummy_data = vec![200u8, 200, 200, 255];
+                                let dummy_texture = ctx.renderer().load_texture_from_rgba(&dummy_data, 1, 1).unwrap();
+                                let mut sprite = Sprite::new(dummy_texture);
+                                sprite.transform.position = asteroid.sprite.transform.position;
+                                sprite.set_size_px(Vec2::new(50.0, 50.0), Vec2::new(1.0, 1.0));
+                                sprite.tint = [0.8, 0.8, 0.8, 1.0];
+                                let new_ast = Asteroid::new(sprite, asteroid.sprite.transform.position, AsteroidSize::Medium);
+                                new_asteroids.push(new_ast);
+                            }
+                            self.score += 20;
+                        }
+                        AsteroidSize::Medium => {
+                            // Spawn 2 small asteroids
+                            for _ in 0..2 {
+                                let dummy_data = vec![200u8, 200, 200, 255];
+                                let dummy_texture = ctx.renderer().load_texture_from_rgba(&dummy_data, 1, 1).unwrap();
+                                let mut sprite = Sprite::new(dummy_texture);
+                                sprite.transform.position = asteroid.sprite.transform.position;
+                                sprite.set_size_px(Vec2::new(30.0, 30.0), Vec2::new(1.0, 1.0));
+                                sprite.tint = [0.8, 0.8, 0.8, 1.0];
+                                let new_ast = Asteroid::new(sprite, asteroid.sprite.transform.position, AsteroidSize::Small);
+                                new_asteroids.push(new_ast);
+                            }
+                            self.score += 50;
+                        }
+                        AsteroidSize::Small => {
+                            // Just destroy it
+                            self.score += 100;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        
+        // Remove bullets and asteroids (in reverse order to maintain indices)
+        bullets_to_remove.sort();
+        bullets_to_remove.reverse();
+        for idx in bullets_to_remove {
+            self.bullets.remove(idx);
+        }
+        
+        asteroids_to_remove.sort();
+        asteroids_to_remove.reverse();
+        for idx in asteroids_to_remove {
+            self.asteroids.remove(idx);
+        }
+        
+        // Add new asteroids
+        self.asteroids.extend(new_asteroids);
+        
+        // Player-Asteroid collisions
+        if let Some(ref player) = self.player {
+            for asteroid in &self.asteroids {
+                if Self::check_collision_circle_circle(
+                    player.sprite.transform.position,
+                    16.0, // player radius
+                    asteroid.sprite.transform.position,
+                    asteroid.radius(),
+                ) {
+                    // Player hit!
+                    self.lives -= 1;
+                    if self.lives <= 0 {
+                        self.game_over = true;
+                    } else {
+                        // Respawn player
+                        let renderer = ctx.renderer();
+                        self.spawn_player(renderer);
+                    }
+                    break;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        let renderer = ctx.renderer();
+        let mut frame = renderer.begin_frame()?;
+        
+        // Clear to black
+        renderer.clear(&mut frame, [0.0, 0.0, 0.0, 1.0])?;
+        
+        // Draw player as triangle
+        if let Some(ref player) = self.player {
+            let ship_points = self.get_ship_points(player);
+            renderer.draw_polygon(&mut frame, &ship_points, [1.0, 1.0, 1.0, 1.0], &self.camera)?;
+        }
+        
+        // Draw bullets as circles
+        for bullet in &self.bullets {
+            renderer.draw_circle(&mut frame, bullet.sprite.transform.position, 3.0, [1.0, 1.0, 1.0, 1.0], &self.camera)?;
+        }
+        
+        // Draw asteroids as polygons
+        for asteroid in &self.asteroids {
+            let asteroid_points = self.get_asteroid_points(asteroid);
+            renderer.draw_polygon(&mut frame, &asteroid_points, [0.8, 0.8, 0.8, 1.0], &self.camera)?;
+        }
+        
+        // Draw HUD
+        if let Some(font) = self.font {
+            self.hud.clear();
+            
+            // Score
+            self.hud.add_text(HudText::new(
+                format!("Score: {}", self.score),
+                font,
+                24.0,
+                Vec2::new(20.0, 20.0),
+                [1.0, 1.0, 1.0, 1.0],
+            ));
+            
+            // Lives
+            self.hud.add_text(HudText::new(
+                format!("Lives: {}", self.lives),
+                font,
+                24.0,
+                Vec2::new(20.0, 50.0),
+                [1.0, 1.0, 1.0, 1.0],
+            ));
+            
+            // Game over
+            if self.game_over {
+                let (screen_w, screen_h) = renderer.surface_size();
+                self.hud.add_text(HudText::new(
+                    "GAME OVER".to_string(),
+                    font,
+                    48.0,
+                    Vec2::new(screen_w as f32 * 0.5 - 150.0, screen_h as f32 * 0.5 - 50.0),
+                    [1.0, 0.0, 0.0, 1.0],
+                ));
+                self.hud.add_text(HudText::new(
+                    "Press R to Restart".to_string(),
+                    font,
+                    24.0,
+                    Vec2::new(screen_w as f32 * 0.5 - 120.0, screen_h as f32 * 0.5),
+                    [1.0, 1.0, 1.0, 1.0],
+                ));
+            }
+        }
+        
+        self.hud.draw(renderer, &mut frame)?;
+        
+        renderer.end_frame(frame)?;
+        Ok(())
+    }
+}
+
