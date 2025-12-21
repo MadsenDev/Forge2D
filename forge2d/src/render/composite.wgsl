@@ -22,19 +22,15 @@ fn vs_main(@location(0) position: vec2<f32>, @location(1) uv: vec2<f32>) -> Vert
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let scene_color = textureSample(scene_tex, scene_sampler, in.uv);
     let light_map = textureSample(light_map_tex, light_map_sampler, in.uv);
-    
-    // Debug: show light map directly to see if lights are rendering
-    // If you see colored light here, the lights are working but composite isn't
-    return vec4<f32>(light_map.rgb * 5.0, 1.0); // Brighten significantly for visibility
-    
+
     // Apply lighting: scene * (ambient + light_map)
     // Light map accumulates lights additively (black = no light, white/colored = light)
     // Add ambient so unlit areas aren't completely black
-    // let ambient = 0.2; // Increased ambient for visibility
-    // let light_brightness = vec3<f32>(ambient) + light_map.rgb;
-    // 
-    // // Multiply scene color with light brightness to apply lighting
-    // // This makes lit areas brighter and unlit areas darker
-    // return vec4<f32>(scene_color.rgb * light_brightness, scene_color.a);
+    let ambient = 0.25; // Increased ambient for visibility
+    let light_brightness = vec3<f32>(ambient) + light_map.rgb;
+
+    // Multiply scene color with light brightness to apply lighting
+    // This makes lit areas brighter and unlit areas darker
+    return vec4<f32>(scene_color.rgb * light_brightness, scene_color.a);
 }
 
