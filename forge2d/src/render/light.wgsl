@@ -95,9 +95,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let distance_falloff = pow(clamp(1.0 - normalized_dist, 0.0, 1.0), uniforms.falloff);
     light_strength *= distance_falloff;
 
-    // Shadowing/occlusion: dim the light if the point is behind geometry
-    if is_occluded(in.world_position) {
-        light_strength *= 0.2;
+    // Shadowing/occlusion: check if there's an occluder between light and fragment
+    // Cast a ray from light to fragment and sample along it
+    let light_to_fragment = in.world_position - uniforms.position;
+    let ray_length = length(light_to_fragment);
+    let ray_dir = light_to_fragment / ray_length;
+    
+    // Sample along the ray (skip the endpoint to avoid self-occlusion)
+    const SHADOW_SAMPLES: i32 = 8;
+    var shadowed = false;
+    for (var i: i32 = 1; i < SHADOW_SAMPLES; i++) {
+        let t = (f32(i) / f32(SHADOW_SAMPLES)) * ray_length;
+        // Skip very close to light to avoid self-shadowing
+        if t < 2.0 {
+            continue;
+        }
+        let sample_pos = uniforms.position + ray_dir * t;
+        if is_occluded(sample_pos) {
+            shadowed = true;
+            break;
+        }
+    }
+    
+    if shadowed {
+        light_strength *= 0.1; // In shadow - very dim
     }
 
     // Apply light color - mix between white (neutral) and light color
