@@ -19,6 +19,7 @@ glam.workspace = true
 image.workspace = true
 rodio.workspace = true
 ab_glyph.workspace = true
+glyphon.workspace = true
 rapier2d.workspace = true
 crossbeam-channel.workspace = true
 serde.workspace = true

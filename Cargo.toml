@@ -12,6 +12,8 @@ members = [
     "examples/age_of_empires_demo",
     "examples/asteroids_demo",
     "examples/simple_test",
+    "examples/camera_demo",
+    "examples/lighting_demo",
     "editor",
 ]
 resolver = "2"
@@ -33,6 +35,7 @@ glam = "0.24"
 image = { version = "0.24", default-features = false, features = ["png"] }
 rodio = "0.17"
 ab_glyph = "0.2"
+glyphon = "0.10"
 rapier2d = "0.14"
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }

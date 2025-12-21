@@ -36,7 +36,7 @@ pub use crate::entities::{
 pub use crate::grid::{Grid, GridCoord, GridPathfinding};
 pub use crate::math::{Camera2D, Transform2D, Vec2};
 pub use crate::pathfinding::{AStarPathfinder, GridNode, PathfindingGrid};
-pub use crate::render::{Frame, FontHandle, Renderer, Sprite, TextureHandle};
+pub use crate::render::{DirectionalLight, Frame, FontHandle, PointLight, Renderer, Sprite, TextureHandle};
 pub use crate::state::{State, StateMachine, StateMachineLike};
 pub use crate::physics::{PhysicsEventCallback, PhysicsWorld};
 pub use rapier2d::prelude::{ImpulseJointHandle, ImpulseJointSet, RigidBodyType};

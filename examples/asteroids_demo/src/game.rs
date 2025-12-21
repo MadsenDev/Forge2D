@@ -101,11 +101,12 @@ impl AsteroidsGame {
     fn get_ship_points(&self, player: &Player) -> Vec<Vec2> {
         // Local ship model: nose points RIGHT (matching Vec2::from_angle(0) = (1, 0))
         // In screen coordinates, this means the ship points right when rotation = 0
+        // Classic asteroids ship: long pointed nose, narrow back
         let size = 20.0;
         let points = vec![
-            Vec2::new(size, 0.0),            // Nose (forward, pointing right)
-            Vec2::new(-size * 0.7, -size),   // Back-left
-            Vec2::new(-size * 0.7, size),    // Back-right
+            Vec2::new(size, 0.0),            // Nose (forward, pointing right) - long point
+            Vec2::new(-size * 0.5, -size * 0.6),   // Back-left - closer to center and narrower
+            Vec2::new(-size * 0.5, size * 0.6),    // Back-right - closer to center and narrower
         ];
         
         // Rotate and translate points using player's rotation
@@ -133,6 +134,44 @@ impl AsteroidsGame {
                 offset.x * sin + offset.y * cos,
             );
             asteroid.sprite.transform.position + rotated
+        }).collect()
+    }
+    
+    fn get_flame_points(&self, player: &Player, time: f32) -> Vec<Vec2> {
+        // Flame animation: vary size and position based on time
+        let animation_speed = 25.0; // How fast the flame flickers
+        let base_size = 12.0;
+        let size_variation = 4.0;
+        
+        // Animate flame size (oscillates between base_size and base_size + size_variation)
+        let flame_size = base_size + (time * animation_speed).sin() * size_variation;
+        
+        // Position behind the ship (opposite of forward direction)
+        // Start from the back of the ship (where the two back points meet)
+        let back_dir = Vec2::from_angle(player.rotation + std::f32::consts::PI);
+        let ship_size = 20.0;
+        // Position flame further back, starting from the ship's back edge
+        let ship_back_offset = ship_size * 0.5; // Half ship size to get to back
+        let flame_base_pos = player.sprite.transform.position + back_dir * ship_back_offset;
+        
+        let cos = player.rotation.cos();
+        let sin = player.rotation.sin();
+        
+        // Create flame shape: wider at the base (attached to ship), narrower at the tip
+        // Flame points backward (opposite of ship direction)
+        let local_points = vec![
+            Vec2::new(-flame_size, 0.0),                    // Tip of flame (furthest back)
+            Vec2::new(0.0, -flame_size * 0.5),              // Left base point (wider)
+            Vec2::new(0.0, flame_size * 0.5),               // Right base point (wider)
+        ];
+        
+        // Rotate and translate points
+        local_points.iter().map(|&p| {
+            let rotated = Vec2::new(
+                p.x * cos - p.y * sin,
+                p.x * sin + p.y * cos,
+            );
+            flame_base_pos + rotated
         }).collect()
     }
     
@@ -401,6 +440,15 @@ impl Game for AsteroidsGame {
     }
     
     fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
+        // Get input and time before borrowing renderer
+        let is_thrusting = if let Some(_) = self.player {
+            let input = ctx.input();
+            input.is_key_down(KeyCode::KeyW) || input.is_key_down(KeyCode::ArrowUp)
+        } else {
+            false
+        };
+        let time = ctx.elapsed_time().as_secs_f32();
+        
         let renderer = ctx.renderer();
         let mut frame = renderer.begin_frame()?;
         
@@ -409,6 +457,32 @@ impl Game for AsteroidsGame {
         
         // Draw player as triangle
         if let Some(ref player) = self.player {
+            // Draw flames behind ship when thrusting
+            if is_thrusting {
+                let flame_points = self.get_flame_points(player, time);
+                
+                // Calculate flame base position for inner flame scaling
+                let back_dir = Vec2::from_angle(player.rotation + std::f32::consts::PI);
+                let ship_back_offset = 20.0 * 0.5; // Half ship size
+                let flame_base_pos = player.sprite.transform.position + back_dir * ship_back_offset;
+                
+                // Draw outer flame (orange/red) - larger
+                renderer.draw_polygon(&mut frame, &flame_points, [1.0, 0.4, 0.0, 1.0], &self.camera)?;
+                
+                // Draw middle flame (orange/yellow) - medium size
+                let middle_flame_points: Vec<Vec2> = flame_points.iter().map(|&p| {
+                    (p - flame_base_pos) * 0.75 + flame_base_pos
+                }).collect();
+                renderer.draw_polygon(&mut frame, &middle_flame_points, [1.0, 0.7, 0.1, 1.0], &self.camera)?;
+                
+                // Draw inner flame (bright yellow/white) - smallest, hottest part
+                let inner_flame_points: Vec<Vec2> = flame_points.iter().map(|&p| {
+                    (p - flame_base_pos) * 0.5 + flame_base_pos
+                }).collect();
+                renderer.draw_polygon(&mut frame, &inner_flame_points, [1.0, 1.0, 0.5, 1.0], &self.camera)?;
+            }
+            
+            // Draw ship on top of flames
             let ship_points = self.get_ship_points(player);
             renderer.draw_polygon(&mut frame, &ship_points, [1.0, 1.0, 1.0, 1.0], &self.camera)?;
         }

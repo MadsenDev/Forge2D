@@ -137,5 +137,8 @@ pub fn update_camera_follow(
         // Instant following
         camera.position = desired_pos;
     }
+    
+    // Update camera (handles smooth zoom, shake decay, bounds clamping)
+    camera.update(dt);
 }
 
