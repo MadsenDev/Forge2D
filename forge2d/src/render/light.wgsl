@@ -64,34 +64,45 @@ fn is_occluded(world_pos: vec2<f32>) -> bool {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Debug: Always output bright light to verify shader is running
-    // If you see this, the shader works but distance calculation is wrong
-    return vec4<f32>(1.0, 0.0, 1.0, 1.0); // Magenta - always output
-    
     // Calculate distance from light center in world space
     let dist = distance(in.world_position, uniforms.position);
-    
-    // Debug: Output based on distance to see if calculation works
-    // if dist < 50.0 {
-    //     return vec4<f32>(1.0, 1.0, 0.0, 1.0); // Yellow if close
-    // }
-    
+
     // Early exit if beyond radius (don't draw anything)
     if dist > uniforms.radius {
         discard;
     }
-    
-    // Simple point light - no spotlight checks for now
+
+    // Spotlight support: if a direction is provided, clamp light to the cone
     var light_strength = uniforms.intensity;
-    
+    let dir_len = length(uniforms.direction);
+    if dir_len > 0.0 {
+        let light_dir = normalize(uniforms.direction);
+        let to_fragment = normalize(in.world_position - uniforms.position);
+        let alignment = dot(to_fragment, light_dir);
+
+        // Discard fragments outside the cone
+        if alignment < uniforms.angle {
+            discard;
+        }
+
+        // Smooth edge for the spotlight cone
+        let spot_falloff = clamp((alignment - uniforms.angle) / (1.0 - uniforms.angle), 0.0, 1.0);
+        light_strength *= spot_falloff;
+    }
+
     // Calculate distance falloff (1.0 at center, 0.0 at radius)
     let normalized_dist = dist / uniforms.radius;
-    let distance_falloff = pow(1.0 - saturate(normalized_dist), uniforms.falloff);
+    let distance_falloff = pow(clamp(1.0 - normalized_dist, 0.0, 1.0), uniforms.falloff);
     light_strength *= distance_falloff;
-    
+
+    // Shadowing/occlusion: dim the light if the point is behind geometry
+    if is_occluded(in.world_position) {
+        light_strength *= 0.2;
+    }
+
     // Apply light color - mix between white (neutral) and light color
     let light_color = mix(vec3<f32>(1.0), uniforms.color, 0.6);
-    
+
     // Return light contribution (will be accumulated additively in light map)
     return vec4<f32>(light_color * light_strength, 1.0);
 }
