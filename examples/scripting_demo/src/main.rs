@@ -163,7 +163,9 @@ impl ScriptingDemo {
     fn update_camera(&mut self) {
         if let Some(player) = self.player {
             if let Some(transform) = self.world.get::<Transform>(player) {
-                self.camera.position = transform.position - Vec2::new(320.0, 180.0);
+                // Camera position represents the center of the view, so align it with the
+                // player's world position just like the other demos.
+                self.camera.position = transform.position;
             }
         }
     }
