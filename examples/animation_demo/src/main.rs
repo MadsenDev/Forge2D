@@ -1,7 +1,7 @@
 use anyhow::Result;
 use forge2d::{
     Engine, Game, EngineContext, Camera2D, Vec2,
-    AnimatedSprite, Animation,
+    render::{AnimatedSprite, Animation},
 };
 
 struct AnimationDemo {
