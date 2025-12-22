@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use winit::{
     event::{ElementState, KeyEvent, MouseButton},
@@ -7,9 +7,9 @@ use winit::{
 
 /// Tracks keyboard and mouse state across frames.
 pub struct InputState {
-    keys_down: [bool; 256],
-    keys_pressed: [bool; 256],
-    keys_released: [bool; 256],
+    keys_down: HashSet<KeyCode>,
+    keys_pressed: HashSet<KeyCode>,
+    keys_released: HashSet<KeyCode>,
 
     mouse_x: f32,
     mouse_y: f32,
@@ -21,9 +21,9 @@ pub struct InputState {
 impl InputState {
     pub fn new() -> Self {
         Self {
-            keys_down: [false; 256],
-            keys_pressed: [false; 256],
-            keys_released: [false; 256],
+            keys_down: HashSet::new(),
+            keys_pressed: HashSet::new(),
+            keys_released: HashSet::new(),
             mouse_x: 0.0,
             mouse_y: 0.0,
             mouse_down: [false; 8],
@@ -34,8 +34,8 @@ impl InputState {
 
     /// Clear per-frame pressed/released flags.
     pub fn begin_frame(&mut self) {
-        self.keys_pressed.fill(false);
-        self.keys_released.fill(false);
+        self.keys_pressed.clear();
+        self.keys_released.clear();
         self.mouse_pressed.fill(false);
         self.mouse_released.fill(false);
     }
@@ -43,19 +43,16 @@ impl InputState {
     /// Handle a keyboard input event from winit.
     pub fn handle_key(&mut self, event: &KeyEvent) {
         if let winit::keyboard::PhysicalKey::Code(keycode) = event.physical_key {
-            let idx = keycode as usize;
-            if idx < self.keys_down.len() {
-                match event.state {
-                    ElementState::Pressed => {
-                        if !self.keys_down[idx] {
-                            self.keys_pressed[idx] = true;
-                        }
-                        self.keys_down[idx] = true;
+            match event.state {
+                ElementState::Pressed => {
+                    if !self.keys_down.contains(&keycode) {
+                        self.keys_pressed.insert(keycode);
                     }
-                    ElementState::Released => {
-                        self.keys_down[idx] = false;
-                        self.keys_released[idx] = true;
-                    }
+                    self.keys_down.insert(keycode);
+                }
+                ElementState::Released => {
+                    self.keys_down.remove(&keycode);
+                    self.keys_released.insert(keycode);
                 }
             }
         }
@@ -87,32 +84,17 @@ impl InputState {
 
     /// Returns true if the key is currently held down.
     pub fn is_key_down(&self, key: KeyCode) -> bool {
-        let idx = key as usize;
-        if idx < self.keys_down.len() {
-            self.keys_down[idx]
-        } else {
-            false
-        }
+        self.keys_down.contains(&key)
     }
 
     /// Returns true if the key was pressed this frame.
     pub fn is_key_pressed(&self, key: KeyCode) -> bool {
-        let idx = key as usize;
-        if idx < self.keys_pressed.len() {
-            self.keys_pressed[idx]
-        } else {
-            false
-        }
+        self.keys_pressed.contains(&key)
     }
 
     /// Returns true if the key was released this frame.
     pub fn is_key_released(&self, key: KeyCode) -> bool {
-        let idx = key as usize;
-        if idx < self.keys_released.len() {
-            self.keys_released[idx]
-        } else {
-            false
-        }
+        self.keys_released.contains(&key)
     }
 
     /// Returns true if the mouse button is currently held down.
@@ -230,7 +212,10 @@ impl InputMap {
 
     /// Bind a key to an action.
     pub fn bind_key(&mut self, action: ActionId, key: KeyCode) {
-        self.actions.entry(action).or_default().push(Button::Key(key));
+        self.actions
+            .entry(action)
+            .or_default()
+            .push(Button::Key(key));
     }
 
     /// Bind a mouse button to an action.
