@@ -4,7 +4,7 @@ use forge2d::{
     math::{Camera2D, Vec2},
     physics::{ColliderShape, PhysicsWorld, RigidBodyType},
     render::{Renderer, Sprite, TextureHandle},
-    Engine, Game,
+    Engine, Game, KeyCode,
 };
 
 struct PlatformerDemo {
@@ -206,10 +206,10 @@ impl Game for PlatformerDemo {
         let move_speed = 300.0;
         let mut target_velocity_x = 0.0;
         
-        if input.is_key_down(forge2d::VirtualKeyCode::A) || input.is_key_down(forge2d::VirtualKeyCode::Left) {
+        if input.is_key_down(KeyCode::KeyA) || input.is_key_down(KeyCode::ArrowLeft) {
             target_velocity_x = -move_speed;
         }
-        if input.is_key_down(forge2d::VirtualKeyCode::D) || input.is_key_down(forge2d::VirtualKeyCode::Right) {
+        if input.is_key_down(KeyCode::KeyD) || input.is_key_down(KeyCode::ArrowRight) {
             target_velocity_x = move_speed;
         }
         
@@ -245,9 +245,9 @@ impl Game for PlatformerDemo {
         }
         
         // Jumping
-        if (input.is_key_pressed(forge2d::VirtualKeyCode::Space) || 
-            input.is_key_pressed(forge2d::VirtualKeyCode::W) ||
-            input.is_key_pressed(forge2d::VirtualKeyCode::Up)) 
+        if (input.is_key_pressed(KeyCode::Space) ||
+            input.is_key_pressed(KeyCode::KeyW) ||
+            input.is_key_pressed(KeyCode::ArrowUp))
             && self.is_grounded && self.jump_cooldown <= 0.0 {
             let jump_force = Vec2::new(0.0, -400.0); // Negative Y is up - reduced for more reasonable jump height
             self.physics.apply_impulse(self.player_entity, jump_force);

@@ -1,7 +1,7 @@
 // Ultra-simple test: Can we make a moving square in < 50 lines?
 
 use anyhow::Result;
-use forge2d::{Engine, EngineContext, Game, Sprite, Vec2, VirtualKeyCode};
+use forge2d::{Engine, EngineContext, Game, KeyCode, Sprite, Vec2};
 
 struct SimpleTest {
     square: Option<Sprite>,
@@ -30,10 +30,10 @@ impl Game for SimpleTest {
         let input = ctx.input();
         
         // Simple movement
-        if input.is_key_down(VirtualKeyCode::W) { self.vel.y -= 200.0 * dt; }
-        if input.is_key_down(VirtualKeyCode::S) { self.vel.y += 200.0 * dt; }
-        if input.is_key_down(VirtualKeyCode::A) { self.vel.x -= 200.0 * dt; }
-        if input.is_key_down(VirtualKeyCode::D) { self.vel.x += 200.0 * dt; }
+        if input.is_key_down(KeyCode::KeyW) { self.vel.y -= 200.0 * dt; }
+        if input.is_key_down(KeyCode::KeyS) { self.vel.y += 200.0 * dt; }
+        if input.is_key_down(KeyCode::KeyA) { self.vel.x -= 200.0 * dt; }
+        if input.is_key_down(KeyCode::KeyD) { self.vel.x += 200.0 * dt; }
         
         // Apply velocity with friction
         self.vel *= 0.9;
@@ -43,7 +43,7 @@ impl Game for SimpleTest {
             square.transform.position = self.pos;
         }
         
-        if input.is_key_pressed(VirtualKeyCode::Escape) {
+        if input.is_key_pressed(KeyCode::Escape) {
             ctx.request_exit();
         }
         Ok(())
