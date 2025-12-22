@@ -872,7 +872,7 @@ impl<'window> WgpuBackend<'window> {
             .ok_or_else(|| anyhow!("Occlusion texture view not available"))?;
 
         // Create render pass for sprites, rendering to scene texture
-        let pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("sprite-pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
                 view: scene_view,
@@ -1052,7 +1052,7 @@ impl<'window> WgpuBackend<'window> {
 
         // Clear light map to white (0.75, 0.75, 0.75) so that when composite adds ambient (0.25),
         // we get 0.25 + 0.75 = 1.0, which means no darkening of the scene
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        let pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("clear-light-map"),
             color_attachments: &[Some(RenderPassColorAttachment {
                 view: light_map_view,
@@ -1421,7 +1421,7 @@ impl<'window> WgpuBackend<'window> {
         &mut self,
         frame: &mut Frame,
         text: &str,
-        font: FontHandle,
+        _font: FontHandle,
         size: f32,
         position: Vec2,
         color: [f32; 4],
