@@ -1,7 +1,7 @@
 use anyhow::Result;
 use forge2d::{
-    ActionId, AxisBinding, Button, Engine, EngineContext, Frame, InputMap, State, StateMachine,
-    StateMachineLike, Vec2, VirtualKeyCode,
+    ActionId, AxisBinding, Button, Engine, EngineContext, Frame, InputMap, KeyCode, State,
+    StateMachine, StateMachineLike, Vec2,
 };
 
 /// Menu state - the initial state
@@ -27,13 +27,13 @@ impl State for MenuState {
         self.time_entered += dt;
 
         // Press Enter to start game
-        if ctx.input().is_key_pressed(VirtualKeyCode::Return) {
+        if ctx.input().is_key_pressed(KeyCode::Enter) {
             println!("Transitioning to GameplayState");
             sm.push(Box::new(GameplayState::new()));
         }
 
         // Press Escape to exit
-        if ctx.input().is_key_pressed(VirtualKeyCode::Escape) {
+        if ctx.input().is_key_pressed(KeyCode::Escape) {
             ctx.request_exit();
         }
 
@@ -72,12 +72,12 @@ impl GameplayState {
             axis_horizontal.clone(),
             AxisBinding::new(
                 vec![
-                    Button::Key(VirtualKeyCode::A),
-                    Button::Key(VirtualKeyCode::Left),
+                    Button::Key(KeyCode::KeyA),
+                    Button::Key(KeyCode::ArrowLeft),
                 ],
                 vec![
-                    Button::Key(VirtualKeyCode::D),
-                    Button::Key(VirtualKeyCode::Right),
+                    Button::Key(KeyCode::KeyD),
+                    Button::Key(KeyCode::ArrowRight),
                 ],
             ),
         );
@@ -87,12 +87,12 @@ impl GameplayState {
             axis_vertical.clone(),
             AxisBinding::new(
                 vec![
-                    Button::Key(VirtualKeyCode::W),
-                    Button::Key(VirtualKeyCode::Up),
+                    Button::Key(KeyCode::KeyW),
+                    Button::Key(KeyCode::ArrowUp),
                 ],
                 vec![
-                    Button::Key(VirtualKeyCode::S),
-                    Button::Key(VirtualKeyCode::Down),
+                    Button::Key(KeyCode::KeyS),
+                    Button::Key(KeyCode::ArrowDown),
                 ],
             ),
         );
@@ -132,13 +132,13 @@ impl State for GameplayState {
         }
 
         // Press P to pause
-        if input.is_key_pressed(VirtualKeyCode::P) {
+        if input.is_key_pressed(KeyCode::KeyP) {
             println!("Pausing game");
             sm.push(Box::new(PauseState));
         }
 
         // Press Escape to return to menu
-        if input.is_key_pressed(VirtualKeyCode::Escape) {
+        if input.is_key_pressed(KeyCode::Escape) {
             println!("Returning to menu");
             sm.pop(); // Pop this state to return to menu
         }
@@ -173,13 +173,13 @@ impl State for PauseState {
 
     fn update(&mut self, ctx: &mut EngineContext, sm: &mut dyn StateMachineLike) -> Result<()> {
         // Press P again to unpause
-        if ctx.input().is_key_pressed(VirtualKeyCode::P) {
+        if ctx.input().is_key_pressed(KeyCode::KeyP) {
             println!("Unpausing game");
             sm.pop(); // Pop pause state to return to gameplay
         }
 
         // Press Escape to return to menu
-        if ctx.input().is_key_pressed(VirtualKeyCode::Escape) {
+        if ctx.input().is_key_pressed(KeyCode::Escape) {
             println!("Returning to menu from pause");
             sm.pop(); // Pop pause
             sm.pop(); // Pop gameplay

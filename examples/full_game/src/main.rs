@@ -3,8 +3,8 @@ use std::time::Duration;
 use anyhow::Result;
 use forge2d::{
     ActionId, AxisBinding, Button, BuiltinFont, Camera2D, Engine, EngineContext, FontHandle,
-    HudLayer, HudRect, HudText, InputMap, MouseButton, Sprite, State, StateMachine,
-    StateMachineLike, Vec2, VirtualKeyCode,
+    HudLayer, HudRect, HudText, InputMap, KeyCode, MouseButton, Sprite, State, StateMachine,
+    StateMachineLike, Vec2,
 };
 
 // Optional embedded font: if you have a TTF/OTF file, you can include it here.
@@ -55,10 +55,10 @@ impl State for MenuState {
         self.time += dt;
 
         // Check input without holding a borrow
-        let up_pressed = ctx.input().is_key_pressed(VirtualKeyCode::Up) || ctx.input().is_key_pressed(VirtualKeyCode::W);
-        let down_pressed = ctx.input().is_key_pressed(VirtualKeyCode::Down) || ctx.input().is_key_pressed(VirtualKeyCode::S);
-        let select_pressed = ctx.input().is_key_pressed(VirtualKeyCode::Return) || ctx.input().is_key_pressed(VirtualKeyCode::Space);
-        let escape_pressed = ctx.input().is_key_pressed(VirtualKeyCode::Escape);
+        let up_pressed = ctx.input().is_key_pressed(KeyCode::ArrowUp) || ctx.input().is_key_pressed(KeyCode::KeyW);
+        let down_pressed = ctx.input().is_key_pressed(KeyCode::ArrowDown) || ctx.input().is_key_pressed(KeyCode::KeyS);
+        let select_pressed = ctx.input().is_key_pressed(KeyCode::Enter) || ctx.input().is_key_pressed(KeyCode::Space);
+        let escape_pressed = ctx.input().is_key_pressed(KeyCode::Escape);
 
         // Navigate menu with arrow keys or WASD
         if up_pressed {
@@ -252,12 +252,12 @@ impl GameplayState {
             axis_horizontal.clone(),
             AxisBinding::new(
                 vec![
-                    Button::Key(VirtualKeyCode::A),
-                    Button::Key(VirtualKeyCode::Left),
+                    Button::Key(KeyCode::KeyA),
+                    Button::Key(KeyCode::ArrowLeft),
                 ],
                 vec![
-                    Button::Key(VirtualKeyCode::D),
-                    Button::Key(VirtualKeyCode::Right),
+                    Button::Key(KeyCode::KeyD),
+                    Button::Key(KeyCode::ArrowRight),
                 ],
             ),
         );
@@ -266,12 +266,12 @@ impl GameplayState {
             axis_vertical.clone(),
             AxisBinding::new(
                 vec![
-                    Button::Key(VirtualKeyCode::W),
-                    Button::Key(VirtualKeyCode::Up),
+                    Button::Key(KeyCode::KeyW),
+                    Button::Key(KeyCode::ArrowUp),
                 ],
                 vec![
-                    Button::Key(VirtualKeyCode::S),
-                    Button::Key(VirtualKeyCode::Down),
+                    Button::Key(KeyCode::KeyS),
+                    Button::Key(KeyCode::ArrowDown),
                 ],
             ),
         );
@@ -437,14 +437,14 @@ impl State for GameplayState {
         let dt = ctx.delta_time().as_secs_f32();
 
         // Exit to menu.
-        if ctx.input().is_key_pressed(VirtualKeyCode::Escape) {
+        if ctx.input().is_key_pressed(KeyCode::Escape) {
             // Replace gameplay with menu (since we replaced menu with gameplay)
             sm.replace(Box::new(MenuState::new()));
             return Ok(());
         }
 
         // Pause.
-        if ctx.input().is_key_pressed(VirtualKeyCode::P) {
+        if ctx.input().is_key_pressed(KeyCode::KeyP) {
             sm.push(Box::new(PauseState::new()));
             return Ok(());
         }
@@ -657,8 +657,8 @@ impl State for PauseState {
     }
 
     fn update(&mut self, ctx: &mut EngineContext, sm: &mut dyn StateMachineLike) -> Result<()> {
-        let p_pressed = ctx.input().is_key_pressed(VirtualKeyCode::P);
-        let escape_pressed = ctx.input().is_key_pressed(VirtualKeyCode::Escape);
+        let p_pressed = ctx.input().is_key_pressed(KeyCode::KeyP);
+        let escape_pressed = ctx.input().is_key_pressed(KeyCode::Escape);
 
         if p_pressed {
             sm.pop(); // Pop pause -> back to gameplay

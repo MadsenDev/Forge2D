@@ -5,7 +5,7 @@ use forge2d::{
     math::{Camera2D, Vec2},
     pathfinding::{AStarPathfinder, GridNode, PathfindingGrid},
     render::{Renderer, Sprite, TextureHandle},
-    Engine, Game,
+    Engine, Game, KeyCode,
 };
 use std::collections::HashSet;
 
@@ -224,7 +224,7 @@ impl Game for PathfindingDemo {
         }
         
         // Space: command agent to move to current goal (if set)
-        if input.is_key_pressed(forge2d::VirtualKeyCode::Space) {
+        if input.is_key_pressed(KeyCode::Space) {
             if let Some(goal) = self.goal_pos {
                 if let Some(path) = AStarPathfinder::find_path(&self.grid, self.agent_pos, goal) {
                     self.agent_target = Some(goal);
