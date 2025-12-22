@@ -8,12 +8,12 @@ let SPEED = if params.contains_key("speed") { params["speed"] } else { 6.0 };
 let JUMP_FORCE = if params.contains_key("jump_force") { params["jump_force"] } else { 8.0 };
 
 fn on_start(self) {
-    let mut transform = self.transform();
+    let transform = self.transform();
     if transform != () { transform.set_rotation(0.0); }
 }
 
 fn on_update(self, dt) {
-    let mut move = vec2(0.0, 0.0);
+    let move = vec2(0.0, 0.0);
     if self.input.is_key_down("A") { move.x -= 1.0; }
     if self.input.is_key_down("D") { move.x += 1.0; }
     if self.input.is_key_down("W") { move.y -= 1.0; }
@@ -25,7 +25,7 @@ fn on_update(self, dt) {
         move.y /= len;
     }
 
-    let mut physics = self.physics();
+    let physics = self.physics();
     if physics != () {
         physics.set_velocity(vec2(move.x * SPEED, move.y * SPEED));
 
@@ -35,7 +35,7 @@ fn on_update(self, dt) {
     }
 
     if self.input.is_key_pressed("Up") {
-        let mut transform = self.transform();
+        let transform = self.transform();
         let pos = if transform != () { transform.position() } else { vec2(0.0, 0.0) };
         let launch = vec2(0.0, -12.0);
         self.world().spawn_dynamic(pos, launch);
