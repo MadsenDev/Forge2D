@@ -16,6 +16,7 @@ members = [
     "examples/lighting_demo",
     "examples/particles_demo",
     "examples/animation_demo",
+    "examples/scripting_demo",
     "editor",
 ]
 resolver = "2"
