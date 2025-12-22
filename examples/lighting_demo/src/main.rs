@@ -67,7 +67,7 @@ impl Game for LightingDemo {
             Vec2::new(400.0, 250.0),
             Vec2::new(-400.0, 250.0),
         ];
-        renderer.draw_polygon(&mut frame, &ground_points, [0.8, 0.8, 0.9, 1.0], &self.camera)?;
+        renderer.draw_polygon_no_occlusion(&mut frame, &ground_points, [0.8, 0.8, 0.9, 1.0], &self.camera)?;
 
         // Draw some circles
         for i in 0..5 {

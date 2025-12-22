@@ -1,7 +1,7 @@
 use anyhow::Result;
 use forge2d::{
     BuiltinFont, Camera2D, EngineContext, FontHandle, Game, HudLayer, HudText, Sprite,
-    Vec2, KeyCode,
+    Vec2, KeyCode, ParticleSystem, ParticleEmitter, EmissionConfig, TextureHandle,
 };
 
 use crate::entities::{Asteroid, AsteroidSize, Bullet, Player};
@@ -24,6 +24,10 @@ pub struct AsteroidsGame {
     bullets: Vec<Bullet>,
     asteroids: Vec<Asteroid>,
     
+    // Track which emitter index belongs to which bullet
+    // This is needed because emitters can be removed when inactive, breaking index matching
+    bullet_emitter_indices: Vec<usize>, // Maps bullet index to emitter index
+    
     // Game state
     score: u32,
     lives: u32,
@@ -32,6 +36,10 @@ pub struct AsteroidsGame {
     // Timing
     shoot_cooldown: f32,
     asteroid_spawn_timer: f32,
+    
+    // Particle system for bullet trails
+    particle_system: ParticleSystem,
+    white_texture: Option<TextureHandle>,
     
     // HUD
     hud: HudLayer,
@@ -47,11 +55,14 @@ impl AsteroidsGame {
             player: None,
             bullets: Vec::new(),
             asteroids: Vec::new(),
+            bullet_emitter_indices: Vec::new(),
             score: 0,
             lives: 3,
             game_over: false,
             shoot_cooldown: 0.0,
             asteroid_spawn_timer: 0.0,
+            particle_system: ParticleSystem::new(),
+            white_texture: None,
             hud: HudLayer::new(),
         }
     }
@@ -193,6 +204,10 @@ impl Game for AsteroidsGame {
         // Camera position represents the center of the view, so we offset by half screen size
         self.camera.position = Vec2::new(self.screen_width * 0.5, self.screen_height * 0.5);
         
+        // Create white texture for particles
+        let white_pixel = [255u8, 255u8, 255u8, 255u8];
+        self.white_texture = Some(ctx.renderer().load_texture_from_rgba(&white_pixel, 1, 1)?);
+        
         // Load font (no textures needed - using vector shapes!)
         self.font = Some(ctx.builtin_font(BuiltinFont::Ui)?);
         
@@ -219,11 +234,15 @@ impl Game for AsteroidsGame {
                 self.game_over = false;
                 self.bullets.clear();
                 self.asteroids.clear();
+                self.bullet_emitter_indices.clear();
+                self.particle_system.clear();
                 self.spawn_player(ctx.renderer());
                 for _ in 0..4 {
                     self.spawn_asteroid(ctx.renderer(), AsteroidSize::Large, None);
                 }
             }
+            // Still update particle system to let particles fade out
+            self.particle_system.update(dt);
             return Ok(());
         }
         
@@ -298,8 +317,31 @@ impl Game for AsteroidsGame {
                 bullet_sprite.tint = [1.0, 1.0, 1.0, 1.0];
                 
                 let bullet = Bullet::new(bullet_sprite, bullet_pos + bullet_dir * 25.0, bullet_dir, 400.0);
+                let bullet_spawn_pos = bullet_pos + bullet_dir * 25.0;
                 self.bullets.push(bullet);
                 self.shoot_cooldown = 0.2; // 5 shots per second
+                
+                // Create particle trail for the bullet
+                let trail_config = EmissionConfig::new(bullet_spawn_pos)
+                    .with_rate(250.0) // Very high rate for dense trail
+                    .with_velocity(
+                        -bullet_dir * 120.0 + Vec2::new(-25.0, -25.0), // Spread opposite to bullet direction
+                        -bullet_dir * 120.0 + Vec2::new(25.0, 25.0),
+                    )
+                    .with_size(Vec2::new(4.0, 4.0), Vec2::new(8.0, 8.0)) // Even larger particles
+                    .with_color([1.0, 1.0, 0.3, 1.0], Some([1.0, 0.5, 0.0, 0.0])) // Very bright yellow to orange
+                    .with_lifetime(0.6, 1.2)
+                    .with_acceleration(Vec2::new(0.0, 0.0))
+                    .with_size_end_multiplier(0.6)
+                    .with_fade_out(false); // Don't fade alpha separately, let color handle it
+                
+                let mut trail_emitter = ParticleEmitter::new(trail_config)
+                    .with_max_particles(100)
+                    .with_texture(self.white_texture);
+                let emitter_index = self.particle_system.emitters().len();
+                self.particle_system.add_emitter(trail_emitter);
+                // Track that this bullet has this emitter
+                self.bullet_emitter_indices.push(emitter_index);
             }
         }
         
@@ -321,7 +363,75 @@ impl Game for AsteroidsGame {
             }
             bullet.lifetime -= dt;
         }
+        
+        // Before removing bullets, stop their emitters
+        let bullets_before = self.bullets.len();
+        
+        // Build a set of indices to keep
+        let mut keep_indices = Vec::new();
+        for (i, bullet) in self.bullets.iter().enumerate() {
+            if bullet.lifetime > 0.0 {
+                keep_indices.push(i);
+            }
+        }
+        
+        // Stop emitters for bullets that will be removed
+        for (i, bullet) in self.bullets.iter().enumerate() {
+            if bullet.lifetime <= 0.0 {
+                // This bullet will be removed - stop its emitter
+                if let Some(&emitter_idx) = self.bullet_emitter_indices.get(i) {
+                    if let Some(emitter) = self.particle_system.emitters_mut().get_mut(emitter_idx) {
+                        emitter.stop_emission();
+                    }
+                }
+            }
+        }
+        
+        // Remove bullets and update emitter index mapping
         self.bullets.retain(|b| b.lifetime > 0.0);
+        let mut new_emitter_indices = Vec::new();
+        for &keep_idx in &keep_indices {
+            if let Some(&emitter_idx) = self.bullet_emitter_indices.get(keep_idx) {
+                new_emitter_indices.push(emitter_idx);
+            }
+        }
+        self.bullet_emitter_indices = new_emitter_indices;
+        
+        // Update particle emitter positions to follow bullets BEFORE updating particle system
+        // This ensures emitters are positioned correctly before particles are spawned
+        // Use the bullet_emitter_indices mapping to find the correct emitter for each bullet
+        for (bullet_idx, bullet) in self.bullets.iter().enumerate() {
+            if let Some(&emitter_idx) = self.bullet_emitter_indices.get(bullet_idx) {
+                // Skip invalid indices (usize::MAX)
+                if emitter_idx != usize::MAX && emitter_idx < self.particle_system.emitters().len() {
+                    if let Some(emitter) = self.particle_system.emitters_mut().get_mut(emitter_idx) {
+                        emitter.set_position(bullet.sprite.transform.position);
+                    }
+                }
+            }
+        }
+        
+        // Update particle system (this will spawn new particles and remove dead ones)
+        let emitter_count_before = self.particle_system.emitters().len();
+        self.particle_system.update(dt);
+        let emitter_count_after = self.particle_system.emitters().len();
+        
+        // If emitters were removed, we can't reliably rebuild the mapping
+        // because indices shift. Instead, we'll just clear invalid mappings
+        // and let the system handle it gracefully
+        if emitter_count_after < emitter_count_before {
+            // Remove any mappings that point to invalid emitter indices
+            self.bullet_emitter_indices.retain(|&idx| idx < emitter_count_after);
+            
+            // If we have fewer mappings than bullets, some bullets lost their emitters
+            // This shouldn't happen in normal operation, but handle it gracefully
+            let bullet_count = self.bullets.len();
+            if self.bullet_emitter_indices.len() < bullet_count {
+                // Trim bullets to match (shouldn't happen, but be safe)
+                // Actually, we should keep bullets and just not have particles for them
+                // So we'll just leave it as is - bullets without emitters won't have trails
+            }
+        }
         
         // Update asteroids
         for asteroid in &mut self.asteroids {
@@ -401,7 +511,14 @@ impl Game for AsteroidsGame {
         bullets_to_remove.sort();
         bullets_to_remove.reverse();
         for idx in bullets_to_remove {
+            // Stop the emitter for this bullet before removing it
+            if let Some(&emitter_idx) = self.bullet_emitter_indices.get(idx) {
+                if let Some(emitter) = self.particle_system.emitters_mut().get_mut(emitter_idx) {
+                    emitter.stop_emission();
+                }
+            }
             self.bullets.remove(idx);
+            self.bullet_emitter_indices.remove(idx);
         }
         
         asteroids_to_remove.sort();
@@ -424,8 +541,18 @@ impl Game for AsteroidsGame {
                 ) {
                     // Player hit!
                     self.lives -= 1;
+                    // Always clear bullets and emitters when player is hit
+                    self.bullets.clear();
+                    self.bullet_emitter_indices.clear();
+                    // Stop all emitters
+                    for emitter in self.particle_system.emitters_mut() {
+                        emitter.stop_emission();
+                    }
+                    
                     if self.lives <= 0 {
                         self.game_over = true;
+                        // Remove player when game over
+                        self.player = None;
                     } else {
                         // Respawn player
                         let renderer = ctx.renderer();
@@ -441,9 +568,14 @@ impl Game for AsteroidsGame {
     
     fn draw(&mut self, ctx: &mut EngineContext) -> Result<()> {
         // Get input and time before borrowing renderer
-        let is_thrusting = if let Some(_) = self.player {
-            let input = ctx.input();
-            input.is_key_down(KeyCode::KeyW) || input.is_key_down(KeyCode::ArrowUp)
+        // Only check for thrusting if not game over and player exists
+        let is_thrusting = if !self.game_over {
+            if let Some(_) = self.player {
+                let input = ctx.input();
+                input.is_key_down(KeyCode::KeyW) || input.is_key_down(KeyCode::ArrowUp)
+            } else {
+                false
+            }
         } else {
             false
         };
@@ -455,47 +587,52 @@ impl Game for AsteroidsGame {
         // Clear to black
         renderer.clear(&mut frame, [0.0, 0.0, 0.0, 1.0])?;
         
-        // Draw player as triangle
-        if let Some(ref player) = self.player {
-            // Draw flames behind ship when thrusting
-            if is_thrusting {
-                let flame_points = self.get_flame_points(player, time);
+        // Draw player as triangle (only if not game over)
+        if !self.game_over {
+            if let Some(ref player) = self.player {
+                // Draw flames behind ship when thrusting
+                if is_thrusting {
+                    let flame_points = self.get_flame_points(player, time);
+                    
+                    // Calculate flame base position for inner flame scaling
+                    let back_dir = Vec2::from_angle(player.rotation + std::f32::consts::PI);
+                    let ship_back_offset = 20.0 * 0.5; // Half ship size
+                    let flame_base_pos = player.sprite.transform.position + back_dir * ship_back_offset;
+                    
+                    // Draw outer flame (orange/red) - larger
+                    renderer.draw_polygon(&mut frame, &flame_points, [1.0, 0.4, 0.0, 1.0], &self.camera)?;
+                    
+                    // Draw middle flame (orange/yellow) - medium size
+                    let middle_flame_points: Vec<Vec2> = flame_points.iter().map(|&p| {
+                        (p - flame_base_pos) * 0.75 + flame_base_pos
+                    }).collect();
+                    renderer.draw_polygon(&mut frame, &middle_flame_points, [1.0, 0.7, 0.1, 1.0], &self.camera)?;
+                    
+                    // Draw inner flame (bright yellow/white) - smallest, hottest part
+                    let inner_flame_points: Vec<Vec2> = flame_points.iter().map(|&p| {
+                        (p - flame_base_pos) * 0.5 + flame_base_pos
+                    }).collect();
+                    renderer.draw_polygon(&mut frame, &inner_flame_points, [1.0, 1.0, 0.5, 1.0], &self.camera)?;
+                }
                 
-                // Calculate flame base position for inner flame scaling
-                let back_dir = Vec2::from_angle(player.rotation + std::f32::consts::PI);
-                let ship_back_offset = 20.0 * 0.5; // Half ship size
-                let flame_base_pos = player.sprite.transform.position + back_dir * ship_back_offset;
-                
-                // Draw outer flame (orange/red) - larger
-                renderer.draw_polygon(&mut frame, &flame_points, [1.0, 0.4, 0.0, 1.0], &self.camera)?;
-                
-                // Draw middle flame (orange/yellow) - medium size
-                let middle_flame_points: Vec<Vec2> = flame_points.iter().map(|&p| {
-                    (p - flame_base_pos) * 0.75 + flame_base_pos
-                }).collect();
-                renderer.draw_polygon(&mut frame, &middle_flame_points, [1.0, 0.7, 0.1, 1.0], &self.camera)?;
-                
-                // Draw inner flame (bright yellow/white) - smallest, hottest part
-                let inner_flame_points: Vec<Vec2> = flame_points.iter().map(|&p| {
-                    (p - flame_base_pos) * 0.5 + flame_base_pos
-                }).collect();
-                renderer.draw_polygon(&mut frame, &inner_flame_points, [1.0, 1.0, 0.5, 1.0], &self.camera)?;
+                // Draw ship on top of flames
+                let ship_points = self.get_ship_points(player);
+                renderer.draw_polygon(&mut frame, &ship_points, [1.0, 1.0, 1.0, 1.0], &self.camera)?;
             }
             
-            // Draw ship on top of flames
-            let ship_points = self.get_ship_points(player);
-            renderer.draw_polygon(&mut frame, &ship_points, [1.0, 1.0, 1.0, 1.0], &self.camera)?;
-        }
-        
-        // Draw bullets as circles
-        for bullet in &self.bullets {
-            renderer.draw_circle(&mut frame, bullet.sprite.transform.position, 3.0, [1.0, 1.0, 1.0, 1.0], &self.camera)?;
-        }
-        
-        // Draw asteroids as polygons
-        for asteroid in &self.asteroids {
-            let asteroid_points = self.get_asteroid_points(asteroid);
-            renderer.draw_polygon(&mut frame, &asteroid_points, [0.8, 0.8, 0.8, 1.0], &self.camera)?;
+            // Draw particle trails (before bullets so they appear behind)
+            renderer.draw_particles(&mut frame, &self.particle_system, &self.camera, self.white_texture)?;
+            
+            // Draw bullets as circles
+            for bullet in &self.bullets {
+                renderer.draw_circle(&mut frame, bullet.sprite.transform.position, 3.0, [1.0, 1.0, 1.0, 1.0], &self.camera)?;
+            }
+            
+            // Draw asteroids as polygons
+            for asteroid in &self.asteroids {
+                let asteroid_points = self.get_asteroid_points(asteroid);
+                renderer.draw_polygon(&mut frame, &asteroid_points, [0.8, 0.8, 0.8, 1.0], &self.camera)?;
+            }
         }
         
         // Draw HUD

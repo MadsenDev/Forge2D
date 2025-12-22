@@ -108,6 +108,7 @@ renderer.draw_sprite(&mut frame, &sprite, &camera)?;
 - **`texture: TextureHandle`** - The texture to render
 - **`transform: Transform2D`** - Position (center), scale (multiplier), rotation (radians)
 - **`tint: [f32; 4]`** - RGBA color tint (default: `[1.0, 1.0, 1.0, 1.0]`)
+- **`is_occluder: bool`** - Whether the sprite casts shadows (default: `true`)
 
 ## Camera System
 
@@ -366,11 +367,9 @@ renderer.draw_polygon(
 
 ### Vector Shape Notes
 
-- **Polygon Triangulation**: Polygons are rendered using fan triangulation from the center point. This means:
-  - **Convex polygons work perfectly** - All points should be on the boundary of a convex shape
-  - **Concave polygons may render incorrectly** - Lines may appear going to the center, creating unwanted visual artifacts
+- **Polygon Triangulation**: Polygons are rendered using Ear Clipping triangulation. This means:
+  - **Convex and Concave polygons work correctly**
   - **Point Order**: Points should be provided in counter-clockwise order around the shape
-  - **Known Bug**: Concave polygons with deep indentations can cause rendering issues where lines appear to go to the center. For best results, ensure polygons are convex or have minimal concavity.
 
 - **Performance**: Vector shapes are GPU-accelerated and batched automatically
 - **Coordinate System**: All positions are in world coordinates (affected by camera)
@@ -426,3 +425,51 @@ fn draw_asteroid(&self, renderer: &mut Renderer, frame: &mut Frame,
 }
 ```
 
+
+## Lighting System
+
+Forge2D includes a 2D dynamic lighting system supporting point lights, soft shadows, and occlusion.
+
+### Adding Lights
+
+Lights are drawn using `draw_point_light`. They are additive, meaning they brighten the scene.
+
+```rust
+use forge2d::PointLight;
+
+// Create a light
+let light = PointLight::new(
+    Vec2::new(100.0, 100.0), // Position
+    [1.0, 0.8, 0.6],         // Color (RGB)
+    2.0,                     // Intensity
+    300.0,                   // Radius in pixels
+);
+
+renderer.draw_point_light(&mut frame, &light, &camera)?;
+```
+
+### Occlusion
+
+The lighting system distinguishes between **Occluders** (objects that block light and cast shadows) and **Background** (objects that receive light but do not cast shadows).
+
+-   **Sprites**: By default, sprites are occluders. You can disable this by setting `sprite.is_occluder = false`.
+-   **Shapes**: Standard shape drawing methods (`draw_polygon`, `draw_circle`, `draw_rect`) create occluders.
+-   **Backgrounds**: Use `draw_polygon_no_occlusion` to draw geometry that should be illuminated but allow light to pass through (e.g., ground tiles, background walls).
+
+```rust
+// Draw a floor that receives light but doesn't block it
+renderer.draw_polygon_no_occlusion(
+    &mut frame, 
+    &floor_points, 
+    [0.5, 0.5, 0.5, 1.0], 
+    &camera
+)?;
+
+// Draw a wall that blocks light
+renderer.draw_polygon(
+    &mut frame, 
+    &wall_points, 
+    [0.8, 0.8, 0.8, 1.0], 
+    &camera
+)?;
+```

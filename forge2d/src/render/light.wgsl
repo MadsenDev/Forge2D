@@ -8,15 +8,14 @@ struct LightUniforms {
     falloff: f32,
     direction: vec2<f32>, // Spotlight direction (normalized), or [0,0] for point light
     angle: f32, // Spotlight angle (cos of half-angle), or 0 for point light
-    mvp: mat4x4<f32>,
-    // Camera info for shadow mapping
     screen_size: vec2<f32>,
     view_proj: mat4x4<f32>,
+    mvp: mat4x4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: LightUniforms;
-@group(0) @binding(1) var scene_tex: texture_2d<f32>;
-@group(0) @binding(2) var scene_sampler: sampler;
+@group(0) @binding(1) var occlusion_tex: texture_2d<f32>; // R8 texture
+@group(0) @binding(2) var occlusion_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
@@ -54,12 +53,12 @@ fn world_to_screen_uv(world_pos: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(0.5) + uv * vec2<f32>(0.5);
 }
 
-// Check if a point is occluded by sampling the scene texture
+// Check if a point is occluded by sampling the occlusion texture
 fn is_occluded(world_pos: vec2<f32>) -> bool {
     let uv = world_to_screen_uv(world_pos);
-    let scene_sample = textureSample(scene_tex, scene_sampler, uv);
-    // If alpha > 0.5, there's an occluder
-    return scene_sample.a > 0.5;
+    let occlusion_sample = textureSample(occlusion_tex, occlusion_sampler, uv);
+    // R channel > 0.5 means occluded
+    return occlusion_sample.r > 0.5;
 }
 
 @fragment

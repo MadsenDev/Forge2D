@@ -1,0 +1,12 @@
+[package]
+name = "animation_demo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "animation_demo"
+path = "src/main.rs"
+
+[dependencies]
+forge2d = { path = "../../forge2d" }
+anyhow = "1"

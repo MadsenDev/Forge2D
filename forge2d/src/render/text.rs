@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use anyhow::Result;
-use glyphon::{Cache, Family, FontSystem, Resolution, SwashCache, TextAtlas, TextRenderer as GlyphonTextRenderer, Viewport};
+use glyphon::{Cache, FontSystem, SwashCache, TextAtlas, TextRenderer as GlyphonTextRenderer, Viewport};
 
-use crate::render::TextureHandle;
+
 
 /// A font loaded and ready for text rendering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -87,8 +87,11 @@ impl Renderer {
     pub fn draw_text(&mut self, frame: &mut Frame, text: &str, font: FontHandle, size: f32, position: Vec2, color: [f32; 4], camera: &Camera2D) -> Result<()>;
     pub fn draw_line(&mut self, frame: &mut Frame, start: Vec2, end: Vec2, width: f32, color: [f32; 4], camera: &Camera2D) -> Result<()>;
     pub fn draw_circle(&mut self, frame: &mut Frame, center: Vec2, radius: f32, color: [f32; 4], camera: &Camera2D) -> Result<()>;
-    pub fn draw_polygon(&mut self, frame: &mut Frame, points: &[Vec2], color: [f32; 4], camera: &Camera2D) -> Result<()>;
-    pub fn load_texture_from_file(&mut self, path: &str) -> Result<TextureHandle>;
+    pub draw_circle(&mut self, frame: &mut Frame, center: Vec2, radius: f32, color: [f32; 4], camera: &Camera2D) -> Result<()>;
+    pub draw_polygon(&mut self, frame: &mut Frame, points: &[Vec2], color: [f32; 4], camera: &Camera2D) -> Result<()>;
+    pub draw_polygon_no_occlusion(&mut self, frame: &mut Frame, points: &[Vec2], color: [f32; 4], camera: &Camera2D) -> Result<()>;
+    pub draw_point_light(&mut self, frame: &mut Frame, light: &PointLight, camera: &Camera2D) -> Result<()>;
+    pub load_texture_from_file(&mut self, path: &str) -> Result<TextureHandle>;
     pub fn load_texture_from_bytes(&mut self, bytes: &[u8]) -> Result<TextureHandle>;
     pub fn load_font_from_bytes(&mut self, bytes: &[u8]) -> Result<FontHandle>;
     pub fn rasterize_text_glyphs(&mut self, text: &str, font: FontHandle, size: f32) -> Result<()>;
@@ -105,6 +108,7 @@ pub struct Sprite {
     pub texture: TextureHandle,
     pub transform: Transform2D,
     pub tint: [f32; 4],
+    pub is_occluder: bool,
 }
 
 impl Sprite {
@@ -119,16 +123,162 @@ impl Sprite {
 pub struct Camera2D {
     pub position: Vec2,
     pub zoom: f32,
+    pub rotation: f32,
+    pub offset: Vec2,
+    pub target_zoom: f32,
+    pub zoom_speed: f32,
+    pub shake_intensity: f32,
+    pub shake_timer: f32,
+    pub bounds: Option<(Vec2, Vec2)>,
 }
 
 impl Camera2D {
     pub fn new(position: Vec2) -> Self;
     pub fn default() -> Self;
+    pub fn with_rotation(self, rotation: f32) -> Self;
+    pub fn with_offset(self, offset: Vec2) -> Self;
+    pub fn with_bounds(self, min: Vec2, max: Vec2) -> Self;
+    pub fn without_bounds(self) -> Self;
+    
+    pub fn update(&mut self, dt: f32);
+    pub fn shake(&mut self, intensity: f32, duration: f32);
+    pub fn zoom_to(&mut self, target_zoom: f32, speed: f32);
+    pub fn zoom_to_point(&mut self, world_point: Vec2, target_zoom: f32, speed: f32, width: u32, height: u32);
+    
     pub fn screen_to_world(&self, screen: Vec2, width: u32, height: u32) -> Vec2;
     pub fn world_to_screen(&self, world: Vec2, width: u32, height: u32) -> Vec2;
     pub fn view_projection(&self, width: u32, height: u32) -> Mat4;
+    pub fn viewport_bounds(&self, width: u32, height: u32) -> (Vec2, Vec2);
+    pub fn is_point_visible(&self, point: Vec2, width: u32, height: u32) -> bool;
+    pub fn is_rect_visible(&self, min: Vec2, max: Vec2, width: u32, height: u32) -> bool;
+    pub fn is_circle_visible(&self, center: Vec2, radius: f32, width: u32, height: u32) -> bool;
 }
 ```
+
+## Particle System
+
+### ParticleSystem
+
+```rust
+pub struct ParticleSystem { /* ... */ }
+
+impl ParticleSystem {
+    pub fn new() -> Self;
+    pub fn add_emitter(&mut self, emitter: ParticleEmitter);
+    pub fn update(&mut self, dt: f32);
+    pub fn emitters(&self) -> &[ParticleEmitter];
+    pub fn emitters_mut(&mut self) -> &mut [ParticleEmitter];
+    pub fn clear(&mut self);
+}
+```
+
+### ParticleEmitter
+
+```rust
+pub struct ParticleEmitter { /* ... */ }
+
+impl ParticleEmitter {
+    pub fn new(config: EmissionConfig) -> Self;
+    pub fn with_max_particles(self, max: usize) -> Self;
+    pub fn with_texture(self, texture: Option<TextureHandle>) -> Self;
+    pub fn update(&mut self, dt: f32);
+    pub fn set_position(&mut self, position: Vec2);
+    pub fn position(&self) -> Vec2;
+    pub fn stop_emission(&mut self);
+    pub fn is_emitting(&self) -> bool;
+    pub fn is_active(&self) -> bool;
+    pub fn particles(&self) -> &[Particle];
+}
+```
+
+### EmissionConfig
+
+```rust
+pub struct EmissionConfig {
+    pub particles_per_second: f32,
+    pub burst_count: usize,
+    pub position: Vec2,
+    /* ... other fields ... */
+}
+
+impl EmissionConfig {
+    pub fn new(position: Vec2) -> Self;
+    pub fn with_rate(self, rate: f32) -> Self;
+    pub fn with_burst(self, count: usize) -> Self;
+    pub fn with_velocity(self, min: Vec2, max: Vec2) -> Self;
+    pub fn with_size(self, min: Vec2, max: Vec2) -> Self;
+    pub fn with_color(self, start: [f32; 4], end: Option<[f32; 4]>) -> Self;
+    pub fn with_lifetime(self, min: f32, max: f32) -> Self;
+    pub fn with_acceleration(self, acc: Vec2) -> Self;
+    pub fn with_size_end_multiplier(self, mult: f32) -> Self;
+    pub fn with_fade_out(self, fade: bool) -> Self;
+}
+```
+
+### Particle
+
+```rust
+pub struct Particle {
+    pub position: Vec2,
+    pub velocity: Vec2,
+    pub color: [f32; 4],
+    pub size: Vec2,
+    pub lifetime: f32,
+    pub max_lifetime: f32,
+    pub rotation: f32,
+}
+```
+
+## Animation
+
+### Animation
+
+```rust
+pub struct Animation {
+    pub frames: Vec<AnimationFrame>,
+    pub looping: bool,
+    pub total_duration: f32,
+}
+
+impl Animation {
+    pub fn new(frames: Vec<AnimationFrame>, looping: bool) -> Self;
+    pub fn from_grid(texture: TextureHandle, grid_size: (u32, u32), frame_count: usize, frame_duration: f32) -> Self;
+}
+```
+
+### AnimationFrame
+
+```rust
+pub struct AnimationFrame {
+    pub texture: TextureHandle,
+    pub source_rect: Option<[f32; 4]>,
+    pub duration: f32,
+}
+```
+
+### AnimatedSprite
+
+```rust
+pub struct AnimatedSprite {
+    pub animation: Animation,
+    pub current_frame_index: usize,
+    pub playing: bool,
+    pub speed: f32,
+    pub transform: Transform2D,
+    pub tint: [f32; 4],
+    pub is_occluder: bool,
+    pub flip_x: bool,
+    pub flip_y: bool,
+}
+
+impl AnimatedSprite {
+    pub fn new(animation: Animation) -> Self;
+    pub fn update(&mut self, dt: f32);
+    pub fn current_frame(&self) -> Option<&AnimationFrame>;
+    pub fn reset(&mut self);
+}
+```
+
 
 ## Math
 

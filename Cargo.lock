@@ -134,6 +134,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "animation_demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "forge2d",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3629,6 +3637,14 @@ dependencies = [
  "slab",
  "smallvec",
  "spade",
+]
+
+[[package]]
+name = "particles_demo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "forge2d",
 ]
 
 [[package]]

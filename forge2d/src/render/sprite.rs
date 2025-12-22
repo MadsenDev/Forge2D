@@ -11,6 +11,8 @@ pub struct Sprite {
     pub transform: Transform2D,
     /// Multiplicative tint applied to the sampled texture color.
     pub tint: [f32; 4],
+    /// Whether this sprite casts shadows (occludes light).
+    pub is_occluder: bool,
 }
 
 impl Sprite {
@@ -19,6 +21,7 @@ impl Sprite {
             texture,
             transform: Transform2D::default(),
             tint: [1.0, 1.0, 1.0, 1.0],
+            is_occluder: true, // Default to casting shadows
         }
     }
 

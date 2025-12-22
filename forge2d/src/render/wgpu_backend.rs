@@ -19,14 +19,15 @@ use wgpu::{
 use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{
-    math::{Camera2D, Vec2},
+    math::{Camera2D, Transform2D, Vec2},
     render::light::{DirectionalLight, PointLight},
+    render::particles::{Particle, ParticleEmitter, ParticleSystem},
     render::sprite::{Sprite, TextureHandle},
     render::text::{FontHandle, TextRenderer},
 };
 use glam::{Mat4, Vec3};
 use glyphon::{
-    Attrs, Buffer as GlyphonBuffer, Cache, Color, Family, Metrics, Resolution, Shaping, TextArea,
+    Attrs, Buffer as GlyphonBuffer, Cache, Color, Metrics, Shaping, TextArea,
     TextAtlas, TextRenderer as GlyphonTextRenderer, Viewport,
 };
 
@@ -66,6 +67,32 @@ impl<'window> Renderer<'window> {
         camera: &Camera2D,
     ) -> Result<()> {
         self.backend.draw_sprite(frame, sprite, camera)
+    }
+
+    /// Draw a section of a texture (useful for spritesheets).
+    /// * `uv_rect`: Normalized UV coordinates [x, y, w, h].
+    ///   - x, y: Top-left corner (0.0 to 1.0)
+    ///   - w, h: Width and Height (0.0 to 1.0)
+    ///   - If None, renders the full texture.
+    pub fn draw_texture_region(
+        &mut self,
+        frame: &mut Frame,
+        texture: TextureHandle,
+        uv_rect: Option<[f32; 4]>,
+        transform: &crate::math::Transform2D,
+        tint: [f32; 4],
+        is_occluder: bool,
+        camera: &Camera2D,
+    ) -> Result<()> {
+        self.backend.draw_texture_region(
+            frame,
+            texture,
+            uv_rect,
+            transform,
+            tint,
+            is_occluder,
+            camera
+        )
     }
 
     pub fn end_frame(&mut self, frame: Frame) -> Result<()> {
@@ -156,7 +183,18 @@ impl<'window> Renderer<'window> {
         color: [f32; 4],
         camera: &Camera2D,
     ) -> Result<()> {
-        self.backend.draw_polygon(frame, points, color, camera)
+        self.backend.draw_polygon(frame, points, color, camera, true)
+    }
+
+    /// Draw a filled polygon that does not occlude light.
+    pub fn draw_polygon_no_occlusion(
+        &mut self,
+        frame: &mut Frame,
+        points: &[Vec2],
+        color: [f32; 4],
+        camera: &Camera2D,
+    ) -> Result<()> {
+        self.backend.draw_polygon(frame, points, color, camera, false)
     }
 
     /// Draw a filled circle.
@@ -183,6 +221,44 @@ impl<'window> Renderer<'window> {
     ) -> Result<()> {
         self.backend.draw_point_light(frame, light, camera)
     }
+
+    /// Draw all particles from a particle system.
+    /// Particles are rendered as sprites, so they can use textures or be simple colored quads.
+    pub fn draw_particles(
+        &mut self,
+        frame: &mut Frame,
+        particle_system: &ParticleSystem,
+        camera: &Camera2D,
+        default_texture: Option<TextureHandle>,
+    ) -> Result<()> {
+        for emitter in particle_system.emitters() {
+            let texture = emitter.texture().or(default_texture);
+            
+            for particle in emitter.particles() {
+                if !particle.is_alive() {
+                    continue;
+                }
+
+                // Create a sprite for this particle
+                let mut sprite = if let Some(tex) = texture {
+                    Sprite::new(tex)
+                } else {
+                    // If no texture, we'll render as a colored quad
+                    // For now, use a 1x1 white texture if available, or skip
+                    // TODO: Add support for rendering particles as colored quads
+                    continue;
+                };
+
+                sprite.transform.position = particle.position;
+                sprite.transform.scale = particle.size;
+                sprite.transform.rotation = particle.rotation;
+                sprite.tint = particle.color;
+
+                self.draw_sprite(frame, &sprite, camera)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct Frame {
@@ -194,6 +270,8 @@ pub struct Frame {
     // Render targets for lighting
     scene_texture: Option<Texture>,
     scene_texture_view: Option<TextureView>,
+    occlusion_texture: Option<Texture>, // New occlusion target
+    occlusion_texture_view: Option<TextureView>,
     light_map_texture: Option<Texture>,
     light_map_texture_view: Option<TextureView>,
     scene_cleared: bool, // Track if scene texture has been cleared this frame
@@ -230,7 +308,7 @@ struct SpritePipeline {
 // Maximum number of sprites we can draw per frame
 // Increased to 2048 sprites (512KB buffer) for better performance with large scenes
 const MAX_SPRITES_PER_FRAME: usize = 2048;
-const UNIFORM_BUFFER_SIZE: u64 = MAX_SPRITES_PER_FRAME as u64 * 256; // 512KB
+const UNIFORM_BUFFER_SIZE: u64 = MAX_SPRITES_PER_FRAME as u64 * 512; // Increased for larger uniform struct
 
 struct WgpuBackend<'window> {
     surface: wgpu::Surface<'window>,
@@ -262,6 +340,10 @@ struct SpriteVertex {
 struct SpriteUniforms {
     mvp: [[f32; 4]; 4],
     color: [f32; 4],
+    uv_offset: [f32; 2],
+    uv_scale: [f32; 2],
+    is_occluder: f32,
+    _pad: [f32; 3],
 }
 
 #[repr(C)]
@@ -269,6 +351,8 @@ struct SpriteUniforms {
 struct ShapeUniforms {
     mvp: [[f32; 4]; 4],
     color: [f32; 4],
+    is_occluder: f32, // Added
+    _pad: [f32; 3], // 4 + 12 = 16 bytes alignment
 }
 
 #[repr(C)]
@@ -295,8 +379,9 @@ struct LightUniforms {
     falloff: f32,
     direction: [f32; 2], // Spotlight direction (normalized), or [0,0] for point light
     angle: f32,          // Spotlight angle (cos of half-angle), or 0 for point light
+    _pad2: f32,          // Padding to align screen_size to 8 bytes
     screen_size: [f32; 2], // Screen size for shadow mapping
-    _pad2: [f32; 2],     // Padding to align view_proj to 16 bytes
+    // No padding needed here: 56 + 8 = 64 bytes, which is 16-byte aligned
     view_proj: [[f32; 4]; 4], // View-projection matrix for shadow mapping
     mvp: [[f32; 4]; 4],
 }
@@ -359,12 +444,12 @@ impl<'window> WgpuBackend<'window> {
         }))?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
-            label: Some("forge2d-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: Default::default(),
-            memory_hints: Default::default(),
-            trace: wgpu::Trace::Off,
+                label: Some("forge2d-device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                experimental_features: Default::default(),
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
         }))?;
 
         let size = window.inner_size();
@@ -413,6 +498,31 @@ impl<'window> WgpuBackend<'window> {
             bind_group_cache: HashMap::new(),
             text_renderer: TextRenderer::new(),
         })
+    }
+
+    fn ensure_text_components_initialized(&mut self) -> Result<()> {
+        // Initialize glyphon components if not already initialized
+        if self.text_renderer.text_atlas_mut().is_none() {
+            let (width, height) = (self.surface_config.width, self.surface_config.height);
+            
+            // Initialize GPU Cache first (needed for TextAtlas)
+            let gpu_cache = Cache::new(&self.device);
+            
+            // Initialize TextAtlas - try the API based on compiler errors
+            let mut text_atlas = TextAtlas::new(&self.device, &self.queue, &gpu_cache, self.surface_config.format);
+            
+            // Initialize GlyphonTextRenderer
+            let text_renderer = GlyphonTextRenderer::new(&mut text_atlas, &self.device, wgpu::MultisampleState::default(), None);
+            
+            // Initialize Viewport - API: new(device, cache)
+            let viewport = Viewport::new(&self.device, &gpu_cache);
+            
+            *self.text_renderer.text_atlas_mut() = Some(text_atlas);
+            *self.text_renderer.text_renderer_mut() = Some(text_renderer);
+            *self.text_renderer.viewport_mut() = Some(viewport);
+            *self.text_renderer.gpu_cache_mut() = Some(gpu_cache);
+        }
+        Ok(())
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -482,6 +592,24 @@ impl<'window> WgpuBackend<'window> {
                     let light_map_texture_view =
                         light_map_texture.create_view(&TextureViewDescriptor::default());
 
+                    // Create occlusion texture (R8)
+                    let occlusion_texture = self.device.create_texture(&TextureDescriptor {
+                        label: Some("occlusion-texture"),
+                        size: Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: TextureDimension::D2,
+                        format: TextureFormat::R8Unorm, // Single channel for occlusion mask
+                        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    });
+                    let occlusion_texture_view =
+                        occlusion_texture.create_view(&TextureViewDescriptor::default());
+
                     return Ok(Frame {
                         surface_texture: Some(surface_texture),
                         view,
@@ -490,25 +618,27 @@ impl<'window> WgpuBackend<'window> {
                         light_draws: Vec::new(),
                         scene_texture: Some(scene_texture),
                         scene_texture_view: Some(scene_texture_view),
+                        occlusion_texture: Some(occlusion_texture),
+                        occlusion_texture_view: Some(occlusion_texture_view),
                         light_map_texture: Some(light_map_texture),
                         light_map_texture_view: Some(light_map_texture_view),
                         scene_cleared: false,
                     });
                 }
                 Err(e) => match e {
-                    wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                        self.surface.configure(&self.device, &self.surface_config);
-                        continue;
-                    }
-                    wgpu::SurfaceError::Timeout => {
-                        continue;
-                    }
-                    wgpu::SurfaceError::OutOfMemory => {
-                        return Err(anyhow!("Surface ran out of memory"));
-                    }
-                    wgpu::SurfaceError::Other => {
-                        return Err(anyhow!("Surface error: Other"));
-                    }
+                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                            self.surface.configure(&self.device, &self.surface_config);
+                            continue;
+                        }
+                        wgpu::SurfaceError::Timeout => {
+                            continue;
+                        }
+                        wgpu::SurfaceError::OutOfMemory => {
+                            return Err(anyhow!("Surface ran out of memory"));
+                        }
+                        wgpu::SurfaceError::Other => {
+                            return Err(anyhow!("Surface error: Other"));
+                        }
                 },
             }
         }
@@ -549,9 +679,31 @@ impl<'window> WgpuBackend<'window> {
     }
 
     fn draw_sprite(&mut self, frame: &mut Frame, sprite: &Sprite, camera: &Camera2D) -> Result<()> {
+        self.draw_texture_region(
+            frame,
+            sprite.texture,
+            None,
+            &sprite.transform,
+            sprite.tint,
+            sprite.is_occluder,
+            camera
+        )
+    }
+
+    /// Internal method to draw a texture region (or full texture)
+    fn draw_texture_region(
+        &mut self,
+        frame: &mut Frame,
+        texture_handle: TextureHandle,
+        uv_rect: Option<[f32; 4]>, // x, y, w, h (normalized)
+        transform: &Transform2D,
+        tint: [f32; 4],
+        is_occluder: bool,
+        camera: &Camera2D,
+    ) -> Result<()> {
         let texture = self
             .textures
-            .get(&sprite.texture)
+            .get(&texture_handle)
             .ok_or_else(|| anyhow!("Unknown texture handle"))?;
 
         // Check if we've exceeded the maximum sprites per frame
@@ -563,13 +715,23 @@ impl<'window> WgpuBackend<'window> {
         }
 
         let base_size = Vec2::new(texture.size.0 as f32, texture.size.1 as f32);
-        let model = sprite.transform.to_matrix(base_size);
+        let model = transform.to_matrix(base_size);
         let vp = camera.view_projection(self.surface_config.width, self.surface_config.height);
         let mvp = vp * model;
 
+        let (uv_offset, uv_scale) = if let Some(rect) = uv_rect {
+            ([rect[0], rect[1]], [rect[2], rect[3]])
+        } else {
+            ([0.0, 0.0], [1.0, 1.0])
+        };
+
         let uniforms = SpriteUniforms {
             mvp: mvp.to_cols_array_2d(),
-            color: sprite.tint,
+            color: tint,
+            uv_offset,
+            uv_scale,
+            is_occluder: if is_occluder { 1.0 } else { 0.0 },
+            _pad: [0.0; 3],
         };
 
         // Write uniforms at the current offset (aligned to required alignment)
@@ -588,7 +750,7 @@ impl<'window> WgpuBackend<'window> {
 
         // Get or create bind group for this texture (cache per texture)
         // We ensure it exists here, then look it up again when flushing
-        let cache_key = (sprite.texture, 0);
+        let cache_key = (texture_handle, 0);
         let uniform_size = std::mem::size_of::<SpriteUniforms>() as u64;
         let _bind_group = self.bind_group_cache.entry(cache_key).or_insert_with(|| {
             self.device.create_bind_group(&BindGroupDescriptor {
@@ -618,7 +780,7 @@ impl<'window> WgpuBackend<'window> {
         // Queue the sprite draw instead of executing immediately
         frame.sprite_draws.push(SpriteDrawCommand {
             uniform_offset: aligned_offset,
-            texture_handle: sprite.texture,
+            texture_handle: texture_handle,
         });
 
         // Advance offset for next sprite
@@ -638,6 +800,11 @@ impl<'window> WgpuBackend<'window> {
             .scene_texture_view
             .as_ref()
             .ok_or_else(|| anyhow!("Scene texture view not available"))?;
+        
+        let occlusion_view = frame
+            .occlusion_texture_view
+            .as_ref()
+            .ok_or_else(|| anyhow!("Occlusion texture view not available"))?;
 
         // Clear the scene texture (this happens before any drawing)
         let _pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -647,6 +814,21 @@ impl<'window> WgpuBackend<'window> {
                 resolve_target: None,
                 ops: Operations {
                     // Clear to transparent so the light shader can use alpha for occlusion.
+                    load: LoadOp::Clear(wgpu::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            }),
+            Some(RenderPassColorAttachment {
+                view: occlusion_view,
+                resolve_target: None,
+                ops: Operations {
+                    // Clear occlusion mask (0.0 = no occlusion)
                     load: LoadOp::Clear(wgpu::Color {
                         r: 0.0,
                         g: 0.0,
@@ -683,6 +865,11 @@ impl<'window> WgpuBackend<'window> {
             .scene_texture_view
             .as_ref()
             .ok_or_else(|| anyhow!("Scene texture view not available"))?;
+        
+        let occlusion_view = frame
+            .occlusion_texture_view
+            .as_ref()
+            .ok_or_else(|| anyhow!("Occlusion texture view not available"))?;
 
         // Create render pass for sprites, rendering to scene texture
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -692,6 +879,15 @@ impl<'window> WgpuBackend<'window> {
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Load, // Load existing scene content (shapes may have been drawn)
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            }),
+            Some(RenderPassColorAttachment {
+                view: occlusion_view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load, // Load existing occlusion content
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -761,11 +957,11 @@ impl<'window> WgpuBackend<'window> {
             falloff: light.falloff,
             direction,
             angle,
+            _pad2: 0.0,
             screen_size: [
                 self.surface_config.width as f32,
                 self.surface_config.height as f32,
             ],
-            _pad2: [0.0, 0.0], // Padding for 16-byte alignment
             view_proj: vp.to_cols_array_2d(),
             mvp: mvp.to_cols_array_2d(),
         };
@@ -796,6 +992,88 @@ impl<'window> WgpuBackend<'window> {
         // Advance offset for next light
         self.light_uniform_write_offset = aligned_offset + self.light_pipeline.uniform_alignment;
 
+        Ok(())
+    }
+
+    fn draw_particles(
+        &mut self,
+        frame: &mut Frame,
+        particle_system: &ParticleSystem,
+        camera: &Camera2D,
+        default_texture: Option<TextureHandle>,
+    ) -> Result<()> {
+        for emitter in particle_system.emitters() {
+            let texture_handle = emitter.texture().or(default_texture);
+            
+            // Get texture size once per emitter
+            let texture_entry = if let Some(tex) = texture_handle {
+                self.textures
+                    .get(&tex)
+                    .ok_or_else(|| anyhow!("Unknown texture handle"))?
+            } else {
+                continue; // Skip if no texture
+            };
+            let texture_size = Vec2::new(texture_entry.size.0 as f32, texture_entry.size.1 as f32);
+            
+            for particle in emitter.particles() {
+                if !particle.is_alive() {
+                    continue;
+                }
+
+                // Particle size is in pixels, so we need to convert to scale
+                // Scale = desired_size / texture_size
+                let scale = Vec2::new(
+                    particle.size.x / texture_size.x,
+                    particle.size.y / texture_size.y,
+                );
+
+                let mut sprite = Sprite::new(texture_handle.unwrap());
+                sprite.transform.position = particle.position;
+                sprite.transform.scale = scale;
+                sprite.transform.rotation = particle.rotation;
+                sprite.tint = particle.color;
+
+                self.draw_sprite(frame, &sprite, camera)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_light_map_to_white(&mut self, frame: &mut Frame) -> Result<()> {
+        let encoder = frame
+            .encoder
+            .as_mut()
+            .ok_or_else(|| anyhow!("Frame already ended"))?;
+
+        let light_map_view = frame
+            .light_map_texture_view
+            .as_ref()
+            .ok_or_else(|| anyhow!("Light map texture view not available"))?;
+
+        // Clear light map to white (0.75, 0.75, 0.75) so that when composite adds ambient (0.25),
+        // we get 0.25 + 0.75 = 1.0, which means no darkening of the scene
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("clear-light-map"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: light_map_view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(wgpu::Color {
+                        r: 0.75,
+                        g: 0.75,
+                        b: 0.75,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            multiview_mask: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        drop(pass);
         Ok(())
     }
 
@@ -843,14 +1121,14 @@ impl<'window> WgpuBackend<'window> {
 
         // Create bind group for lights (shared for all lights, using dynamic offset)
         let uniform_size = std::mem::size_of::<LightUniforms>() as u64;
-        let scene_view = frame
-            .scene_texture_view
+        let occlusion_view = frame
+            .occlusion_texture_view
             .as_ref()
-            .ok_or_else(|| anyhow!("Scene texture view not available"))?;
+            .ok_or_else(|| anyhow!("Occlusion texture view not available"))?;
 
-        // Create sampler for scene texture
+        // Create sampler for occlusion texture
         let sampler = self.device.create_sampler(&SamplerDescriptor {
-            label: Some("light-scene-sampler"),
+            label: Some("light-occlusion-sampler"),
             address_mode_u: AddressMode::ClampToEdge,
             address_mode_v: AddressMode::ClampToEdge,
             address_mode_w: AddressMode::ClampToEdge,
@@ -874,7 +1152,7 @@ impl<'window> WgpuBackend<'window> {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: BindingResource::TextureView(scene_view),
+                    resource: BindingResource::TextureView(occlusion_view),
                 },
                 BindGroupEntry {
                     binding: 2,
@@ -904,7 +1182,12 @@ impl<'window> WgpuBackend<'window> {
         self.flush_sprites(&mut frame)?;
 
         // Step 2: Render lights to light map texture (additive)
-        self.flush_lights(&mut frame)?;
+        // If there are no lights, clear light map to white so composite doesn't darken the scene
+        if frame.light_draws.is_empty() {
+            self.clear_light_map_to_white(&mut frame)?;
+        } else {
+            self.flush_lights(&mut frame)?;
+        }
 
         // Step 3: Composite scene and light map to final surface
         self.composite_scene_and_lights(&mut frame)?;
@@ -917,7 +1200,10 @@ impl<'window> WgpuBackend<'window> {
 
         // Clean up render target textures (they'll be recreated next frame)
         drop(frame.scene_texture.take());
+        drop(frame.scene_texture.take());
         drop(frame.scene_texture_view.take());
+        drop(frame.occlusion_texture.take());
+        drop(frame.occlusion_texture_view.take());
         drop(frame.light_map_texture.take());
         drop(frame.light_map_texture_view.take());
 
@@ -1133,16 +1419,99 @@ impl<'window> WgpuBackend<'window> {
 
     fn draw_text(
         &mut self,
-        _frame: &mut Frame,
-        _text: &str,
-        _font: FontHandle,
-        _size: f32,
-        _position: Vec2,
-        _color: [f32; 4],
-        _camera: &Camera2D,
+        frame: &mut Frame,
+        text: &str,
+        font: FontHandle,
+        size: f32,
+        position: Vec2,
+        color: [f32; 4],
+        camera: &Camera2D,
     ) -> Result<()> {
-        // TODO: Implement glyphon-based text rendering
-        // For now, this is a stub to allow compilation
+        // Ensure text components are initialized
+        self.ensure_text_components_initialized()?;
+        
+        // Get mutable references to text rendering components
+        let (text_atlas, text_renderer, viewport, font_system, cache) = self.text_renderer
+            .get_rendering_refs()
+            .ok_or_else(|| anyhow!("Text components not initialized"))?;
+        
+        // Shape the text - API: set_text(font_system, text, attrs, shaping, align)
+        let mut buffer = GlyphonBuffer::new(font_system, Metrics::new(size, size * 1.2));
+        let attrs = Attrs::new().family(Family::Name("sans-serif"));
+        buffer.set_text(font_system, text, &attrs, Shaping::Advanced, None);
+        buffer.shape_until_scroll(font_system, false);
+        
+        // Convert world position to screen coordinates using camera
+        let (screen_w, screen_h) = (self.surface_config.width, self.surface_config.height);
+        let screen_pos = camera.world_to_screen(position, screen_w, screen_h);
+        
+        // Create text area - add custom_glyphs field
+        let text_area = TextArea {
+            buffer: &buffer,
+            left: screen_pos.x,
+            top: screen_pos.y,
+            scale: 1.0,
+            bounds: glyphon::TextBounds {
+                left: 0,
+                top: 0,
+                right: screen_w as i32,
+                bottom: screen_h as i32,
+            },
+            default_color: Color::rgba(
+                (color[0] * 255.0) as u8,
+                (color[1] * 255.0) as u8,
+                (color[2] * 255.0) as u8,
+                (color[3] * 255.0) as u8,
+            ),
+            custom_glyphs: &[],
+        };
+        
+        // Prepare text for rendering - prepare is on TextRenderer, not TextAtlas
+        // API: text_renderer.prepare(device, queue, font_system, atlas, viewport, text_areas, cache)
+        text_renderer.prepare(
+            &self.device,
+            &self.queue,
+            font_system,
+            text_atlas,
+            viewport,
+            [text_area],
+            cache,
+        )?;
+        
+        // Get encoder and scene texture view for rendering
+        let encoder = frame
+            .encoder
+            .as_mut()
+            .ok_or_else(|| anyhow!("Frame already ended"))?;
+        
+        let scene_view = frame
+            .scene_texture_view
+            .as_ref()
+            .ok_or_else(|| anyhow!("Scene texture view not available"))?;
+        
+        // Render text to scene texture
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("text-pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: scene_view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load, // Load existing scene content
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            multiview_mask: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        
+        // Render - API: render(atlas, viewport, pass) - renders whatever was prepared
+        text_renderer.render(&text_atlas, viewport, &mut pass)?;
+        
+        drop(pass);
+
         Ok(())
     }
 
@@ -1160,6 +1529,7 @@ impl<'window> WgpuBackend<'window> {
         points: &[Vec2],
         color: [f32; 4],
         camera: &Camera2D,
+        is_occluder: bool,
     ) -> Result<()> {
         if points.len() < 3 {
             return Ok(()); // Need at least 3 points for a triangle
@@ -1192,16 +1562,21 @@ impl<'window> WgpuBackend<'window> {
         let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("shape-vertices"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: BufferUsages::VERTEX,
-            });
+            label: Some("shape-vertices"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: BufferUsages::VERTEX,
+        });
 
         // Create MVP matrix
         let vp = camera.view_projection(self.surface_config.width, self.surface_config.height);
         let mvp = vp.to_cols_array_2d();
 
-        let uniforms = ShapeUniforms { mvp, color };
+        let uniforms = ShapeUniforms {
+             mvp,
+             color,
+             is_occluder: if is_occluder { 1.0 } else { 0.0 },
+             _pad: [0.0; 3],
+        };
 
         // Write uniforms
         self.queue.write_buffer(
@@ -1235,6 +1610,12 @@ impl<'window> WgpuBackend<'window> {
             .scene_texture_view
             .as_ref()
             .ok_or_else(|| anyhow!("Scene texture view not available"))?;
+        
+        // Fix: Use correct occlusion view binding
+        let occlusion_view = frame
+            .occlusion_texture_view
+            .as_ref()
+            .ok_or_else(|| anyhow!("Occlusion texture view not available"))?;
 
         // Clear scene texture on first draw if not already cleared
         if !frame.scene_cleared {
@@ -1245,6 +1626,20 @@ impl<'window> WgpuBackend<'window> {
                     resolve_target: None,
                     ops: Operations {
                         // Keep background transparent so only geometry occludes light rays.
+                        load: LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }),
+                Some(RenderPassColorAttachment {
+                    view: occlusion_view,
+                    resolve_target: None,
+                    ops: Operations {
                         load: LoadOp::Clear(wgpu::Color {
                             r: 0.0,
                             g: 0.0,
@@ -1270,6 +1665,15 @@ impl<'window> WgpuBackend<'window> {
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Load, // Load existing scene content
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            }),
+            Some(RenderPassColorAttachment {
+                view: occlusion_view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load, // Load existing occlusion content
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -1305,7 +1709,7 @@ impl<'window> WgpuBackend<'window> {
         // Generate circle vertices using triangle fan
         const SEGMENTS: usize = 32;
         let mut vertices = Vec::with_capacity((SEGMENTS + 2) * 3);
-
+        
         // Center vertex
         vertices.push(ShapeVertex {
             position: [center.x, center.y],
@@ -1335,16 +1739,21 @@ impl<'window> WgpuBackend<'window> {
         let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("circle-vertices"),
-                contents: bytemuck::cast_slice(&triangles),
-                usage: BufferUsages::VERTEX,
-            });
+            label: Some("circle-vertices"),
+            contents: bytemuck::cast_slice(&triangles),
+            usage: BufferUsages::VERTEX,
+        });
 
         // Create MVP matrix
         let vp = camera.view_projection(self.surface_config.width, self.surface_config.height);
         let mvp = vp.to_cols_array_2d();
 
-        let uniforms = ShapeUniforms { mvp, color };
+        let uniforms = ShapeUniforms {
+             mvp,
+             color,
+             is_occluder: 1.0, // Default to occluder
+             _pad: [0.0; 3],
+        };
 
         // Write uniforms
         self.queue.write_buffer(
@@ -1377,6 +1786,11 @@ impl<'window> WgpuBackend<'window> {
             .scene_texture_view
             .as_ref()
             .ok_or_else(|| anyhow!("Scene texture view not available"))?;
+        
+        let occlusion_view = frame
+            .occlusion_texture_view
+            .as_ref()
+            .ok_or_else(|| anyhow!("Occlusion texture view not available"))?;
 
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("shape-pass"),
@@ -1385,6 +1799,15 @@ impl<'window> WgpuBackend<'window> {
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Load, // Load existing scene content
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            }),
+            Some(RenderPassColorAttachment {
+                view: occlusion_view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Load, // Load existing occlusion content
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -1505,6 +1928,12 @@ fn create_sprite_pipeline(device: &wgpu::Device, surface_format: TextureFormat) 
             targets: &[Some(ColorTargetState {
                 format: surface_format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: ColorWrites::ALL,
+            }),
+            // Occlusion target (R8)
+            Some(ColorTargetState {
+                format: TextureFormat::R8Unorm,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -1878,11 +2307,19 @@ fn create_shape_pipeline(device: &wgpu::Device, surface_format: TextureFormat) -
         fragment: Some(FragmentState {
             module: &shader,
             entry_point: Some("fs_main"),
-            targets: &[Some(ColorTargetState {
+            targets: &[
+                Some(ColorTargetState {
                 format: surface_format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: ColorWrites::ALL,
-            })],
+                }),
+                // Occlusion target (R8)
+                Some(ColorTargetState {
+                    format: TextureFormat::R8Unorm,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                }),
+            ],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         }),
         primitive: PrimitiveState {

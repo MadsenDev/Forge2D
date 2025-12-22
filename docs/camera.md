@@ -212,3 +212,80 @@ impl Game for PlatformerGame {
 
 **Important:** `Camera2D.position` represents the **center** of the camera view, not the top-left corner. This is important when calculating dead zones and following logic.
 
+
+## Camera Features
+
+### Rotation
+The camera supports rotation around its center (Z-axis).
+
+```rust
+// Rotate 45 degrees
+camera.rotation = 45.0_f32.to_radians();
+
+// Or using builder
+let camera = Camera2D::default().with_rotation(std::f32::consts::PI / 4.0);
+```
+
+### World Bounds
+You can restrict the camera movement to a specific area (e.g., the map size).
+
+```rust
+// Clamp camera to 0,0 - 1000,1000
+camera.bounds = Some((Vec2::ZERO, Vec2::new(1000.0, 1000.0)));
+
+// Or using builder
+let camera = Camera2D::default()
+    .with_bounds(Vec2::ZERO, Vec2::new(2000.0, 1000.0));
+```
+
+### Camera Shake
+Add impact to your game with built-in camera shake. The shake decays automatically over time.
+
+```rust
+// Shake with intensity 5.0 for 0.5 seconds
+camera.shake(5.0, 0.5);
+```
+
+### Smooth Zoom
+Zoom smoothly to a target level or specific point.
+
+```rust
+// Zoom to 2x over time (speed 5.0)
+camera.zoom_to(2.0, 5.0);
+
+// Zoom 2x focused on a specific world point (e.g. mouse cursor)
+camera.zoom_to_point(mouse_world_pos, 2.0, 5.0, screen_w, screen_h);
+```
+
+### Viewport Queries
+Efficiently check if objects are visible on screen before drawing them (culling).
+
+```rust
+// Check point visibility
+if camera.is_point_visible(enemy.pos, screen_w, screen_h) {
+    enemy.draw(renderer);
+}
+
+// Check rectangle visibility
+if camera.is_rect_visible(rect_min, rect_max, screen_w, screen_h) {
+    // Draw large map chunk
+}
+```
+
+## Integrating Camera Update
+**Important**: For smooth zoom and shake to work, you MUST call `camera.update(dt)` every frame.
+
+```rust
+fn update(&mut self, ctx: &mut EngineContext) -> Result<()> {
+    let dt = ctx.delta_time().as_secs_f32();
+    
+    // Update camera logic
+    self.camera.update(dt);
+    
+    Ok(())
+}
+```
+
+## Examples
+
+For working examples of these features, check `examples/camera_demo`.
