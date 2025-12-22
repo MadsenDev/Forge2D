@@ -38,6 +38,18 @@ fn on_trigger_exit(self, other_entity)
 
 All writes are deferred through the internal command buffer and applied after script execution, which keeps the engine authoritative for rendering and physics.
 
+## Script logging
+Rhai scripts emit output through the runtime's print/debug hooks. Forge2D registers default handlers so `print()` and `debug()` show up in the engine console:
+
+```rhai
+print("hello world");            // prints: [RHAI] hello world
+debug("velocity=" + v.x);        // prints: [RHAI DEBUG] velocity=3.0 @ <unnamed script>:1:1
+```
+
+Notes:
+- Messages are prefixed with `[RHAI]`/`[RHAI DEBUG]` to keep script logs distinct from engine output.
+- `print` only accepts strings; format numbers or vectors before logging them.
+
 ## Minimal usage example
 ```rust
 // Build an entity with scripts

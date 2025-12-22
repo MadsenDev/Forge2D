@@ -668,6 +668,17 @@ impl ScriptRuntime {
     /// Create a new runtime with Rhai backend and built-in API bindings.
     pub fn new() -> Self {
         let mut engine = Engine::new();
+        engine.on_print(|msg| {
+            println!("[RHAI] {}", msg);
+        });
+        engine.on_debug(|msg, src, pos| {
+            println!(
+                "[RHAI DEBUG] {} @ {}:{}",
+                msg,
+                src.unwrap_or("<unnamed script>"),
+                pos
+            );
+        });
         register_rhai_types(&mut engine);
 
         Self {
