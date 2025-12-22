@@ -135,7 +135,7 @@ impl ScriptInstance {
         key: ScriptInstanceKey,
         script_path: String,
         params: &ScriptParams,
-        module: &ScriptModule,
+        _module: &ScriptModule,
     ) -> Self {
         let mut scope = Scope::new();
         scope.push_dynamic("params", params.as_rhai_map().into());
@@ -769,7 +769,7 @@ impl ScriptRuntime {
 
         for key in key_filter {
             if let Some(instance) = self.instances.get_mut(&key) {
-                let mut ctx = ScriptSelf::new(
+                let ctx = ScriptSelf::new(
                     entity,
                     world,
                     physics,
@@ -812,32 +812,46 @@ impl ScriptRuntime {
                 self.load_module(&attachment.path)?;
                 let module_modified = self.modules[&attachment.path].modified;
 
-                let entry = {
+                if !self.instances.contains_key(&key) {
                     let module = &self.modules[&attachment.path];
-                    self.instances.entry(key).or_insert_with(|| {
+                    self.instances.insert(
+                        key,
                         ScriptInstance::new(
                             key,
                             attachment.path.clone(),
                             &attachment.params,
                             module,
-                        )
-                    })
-                };
-
-                if self.hot_reload && module_modified != entry.last_loaded {
-                    self.run_destroy(entry, world, physics, input)?;
-                    let module = &self.modules[&attachment.path];
-                    *entry = ScriptInstance::new(
-                        key,
-                        attachment.path.clone(),
-                        &attachment.params,
-                        module,
+                        ),
                     );
                 }
 
-                if !entry.has_started {
+                let needs_reload = {
+                    let entry = self.instances.get(&key).expect("entry just inserted");
+                    self.hot_reload && module_modified != entry.last_loaded
+                };
+
+                if needs_reload {
+                    if let Some(mut instance) = self.instances.remove(&key) {
+                        self.run_destroy(&mut instance, world, physics, input)?;
+                    }
+
                     let module = &self.modules[&attachment.path];
-                    self.run_create_and_start(entry, world, physics, module, input)?;
+                    self.instances.insert(
+                        key,
+                        ScriptInstance::new(
+                            key,
+                            attachment.path.clone(),
+                            &attachment.params,
+                            module,
+                        ),
+                    );
+                }
+
+                let module = &self.modules[&attachment.path];
+                if let Some(entry) = self.instances.get_mut(&key) {
+                    if !entry.has_started {
+                        self.run_create_and_start(entry, world, physics, module, input)?;
+                    }
                 }
             }
         }
@@ -864,7 +878,7 @@ impl ScriptRuntime {
         stage: ScriptStage,
     ) -> Result<()> {
         for instance in self.instances.values_mut() {
-            let mut ctx = ScriptSelf::new(
+            let ctx = ScriptSelf::new(
                 instance.key.entity,
                 world,
                 physics,
@@ -901,7 +915,7 @@ impl ScriptRuntime {
         module: &ScriptModule,
         input: &InputState,
     ) -> Result<()> {
-        let mut ctx = ScriptSelf::new(
+        let ctx = ScriptSelf::new(
             instance.key.entity,
             world,
             physics,
@@ -925,7 +939,7 @@ impl ScriptRuntime {
         physics: &PhysicsWorld,
         input: &InputState,
     ) -> Result<()> {
-        let mut ctx = ScriptSelf::new(
+        let ctx = ScriptSelf::new(
             instance.key.entity,
             world,
             physics,

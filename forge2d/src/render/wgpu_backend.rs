@@ -872,7 +872,7 @@ impl<'window> WgpuBackend<'window> {
             .ok_or_else(|| anyhow!("Occlusion texture view not available"))?;
 
         // Create render pass for sprites, rendering to scene texture
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        let pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("sprite-pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
                 view: scene_view,

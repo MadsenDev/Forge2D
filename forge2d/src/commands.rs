@@ -220,7 +220,7 @@ impl<T: Clone + Send + Sync + 'static> AddComponent<T> {
 impl<T: Clone + Send + Sync + 'static> Command for AddComponent<T> {
     fn execute(&mut self, world: &mut World) -> Result<()> {
         // Store old component if it exists
-        if let Some(old) = world.get::<T>(self.entity) {
+        if let Some(_old) = world.get::<T>(self.entity) {
             self.had_component = true;
             // We can't clone from a reference, so we'll just mark it
             // In practice, you'd serialize/deserialize for undo
