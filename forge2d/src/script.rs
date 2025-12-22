@@ -332,22 +332,22 @@ fn missing_component<T: Default>(name: &str) -> RhaiResult<T> {
 
 /// Self handle exposed to Rhai scripts. Provides access to facets and engine views.
 #[derive(Clone)]
-pub struct ScriptSelf<'a> {
+pub struct ScriptSelf {
     entity: EntityId,
-    world: &'a World,
-    physics: &'a PhysicsWorld,
-    input: &'a InputState,
+    world: *const World,
+    physics: *const PhysicsWorld,
+    input: *const InputState,
     commands: Arc<Mutex<ScriptCommandBuffer>>,
     dt: f32,
     fixed_dt: f32,
 }
 
-impl<'a> ScriptSelf<'a> {
+impl ScriptSelf {
     fn new(
         entity: EntityId,
-        world: &'a World,
-        physics: &'a PhysicsWorld,
-        input: &'a InputState,
+        world: &World,
+        physics: &PhysicsWorld,
+        input: &InputState,
         commands: Arc<Mutex<ScriptCommandBuffer>>,
         dt: f32,
         fixed_dt: f32,
@@ -375,19 +375,21 @@ impl<'a> ScriptSelf<'a> {
         }
     }
 
-    pub fn input(&mut self) -> InputFacet<'_> {
-        InputFacet { input: self.input }
+    pub fn input(&mut self) -> InputFacet {
+        InputFacet {
+            input: self.input,
+        }
     }
 
-    pub fn world(&mut self) -> WorldFacet<'_> {
+    pub fn world(&mut self) -> WorldFacet {
         WorldFacet {
             world: self.world,
             commands: Arc::clone(&self.commands),
         }
     }
 
-    fn transform_facet(&mut self) -> Option<TransformFacet<'_>> {
-        self.world
+    fn transform_facet(&mut self) -> Option<TransformFacet> {
+        unsafe { &*self.world }
             .get::<Transform>(self.entity)
             .map(|_| TransformFacet {
                 entity: self.entity,
@@ -396,16 +398,18 @@ impl<'a> ScriptSelf<'a> {
             })
     }
 
-    fn physics_facet(&mut self) -> Option<PhysicsFacet<'_>> {
-        self.physics.has_body(self.entity).then(|| PhysicsFacet {
-            entity: self.entity,
-            physics: self.physics,
-            commands: Arc::clone(&self.commands),
-        })
+    fn physics_facet(&mut self) -> Option<PhysicsFacet> {
+        unsafe { &*self.physics }
+            .has_body(self.entity)
+            .then(|| PhysicsFacet {
+                entity: self.entity,
+                physics: self.physics,
+                commands: Arc::clone(&self.commands),
+            })
     }
 
-    fn sprite_facet(&mut self) -> Option<SpriteFacet<'_>> {
-        self.world
+    fn sprite_facet(&mut self) -> Option<SpriteFacet> {
+        unsafe { &*self.world }
             .get::<SpriteComponent>(self.entity)
             .map(|_| SpriteFacet {
                 entity: self.entity,
@@ -413,15 +417,15 @@ impl<'a> ScriptSelf<'a> {
             })
     }
 
-    pub fn transform(&mut self) -> Option<TransformFacet<'_>> {
+    pub fn transform(&mut self) -> Option<TransformFacet> {
         self.transform_facet()
     }
 
-    pub fn physics(&mut self) -> Option<PhysicsFacet<'_>> {
+    pub fn physics(&mut self) -> Option<PhysicsFacet> {
         self.physics_facet()
     }
 
-    pub fn sprite(&mut self) -> Option<SpriteFacet<'_>> {
+    pub fn sprite(&mut self) -> Option<SpriteFacet> {
         self.sprite_facet()
     }
 
@@ -465,44 +469,44 @@ impl TimeFacet {
 }
 
 #[derive(Clone)]
-pub struct InputFacet<'a> {
-    input: &'a InputState,
+pub struct InputFacet {
+    input: *const InputState,
 }
 
-impl<'a> InputFacet<'a> {
+impl InputFacet {
     pub fn is_key_down(&mut self, name: &str) -> bool {
         parse_key(name)
-            .map(|k| self.input.is_key_down(k))
+            .map(|k| unsafe { &*self.input }.is_key_down(k))
             .unwrap_or(false)
     }
 
     pub fn is_key_pressed(&mut self, name: &str) -> bool {
         parse_key(name)
-            .map(|k| self.input.is_key_pressed(k))
+            .map(|k| unsafe { &*self.input }.is_key_pressed(k))
             .unwrap_or(false)
     }
 
     pub fn is_key_released(&mut self, name: &str) -> bool {
         parse_key(name)
-            .map(|k| self.input.is_key_released(k))
+            .map(|k| unsafe { &*self.input }.is_key_released(k))
             .unwrap_or(false)
     }
 
     pub fn mouse_pos_screen(&mut self) -> Vec2 {
-        let (x, y) = self.input.mouse_screen_pixels();
+        let (x, y) = unsafe { &*self.input }.mouse_screen_pixels();
         Vec2::new(x, y)
     }
 }
 
 #[derive(Clone)]
-pub struct WorldFacet<'a> {
-    world: &'a World,
+pub struct WorldFacet {
+    world: *const World,
     commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
-impl<'a> WorldFacet<'a> {
+impl WorldFacet {
     pub fn find_by_tag(&mut self, tag: &str) -> Option<i64> {
-        for (entity, t) in self.world.query::<ScriptTag>() {
+        for (entity, t) in unsafe { &*self.world }.query::<ScriptTag>() {
             if t.0 == tag {
                 return Some(entity.to_u32() as i64);
             }
@@ -516,7 +520,7 @@ impl<'a> WorldFacet<'a> {
         }
 
         let entity = EntityId(entity_raw as u32);
-        if !self.world.is_alive(entity) {
+        if !unsafe { &*self.world }.is_alive(entity) {
             #[cfg(debug_assertions)]
             {
                 return Err(format!("Entity {entity_raw} is not alive").into());
@@ -556,22 +560,22 @@ impl<'a> WorldFacet<'a> {
 }
 
 #[derive(Clone)]
-pub struct TransformFacet<'a> {
+pub struct TransformFacet {
     entity: EntityId,
-    world: &'a World,
+    world: *const World,
     commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
-impl<'a> TransformFacet<'a> {
+impl TransformFacet {
     pub fn position(&mut self) -> RhaiResult<Vec2> {
-        match self.world.get::<Transform>(self.entity) {
+        match unsafe { &*self.world }.get::<Transform>(self.entity) {
             Some(t) => Ok(t.position),
             None => missing_component("Transform"),
         }
     }
 
     pub fn rotation(&mut self) -> RhaiResult<f32> {
-        match self.world.get::<Transform>(self.entity) {
+        match unsafe { &*self.world }.get::<Transform>(self.entity) {
             Some(t) => Ok(t.rotation),
             None => missing_component("Transform"),
         }
@@ -600,15 +604,15 @@ impl<'a> TransformFacet<'a> {
 }
 
 #[derive(Clone)]
-pub struct PhysicsFacet<'a> {
+pub struct PhysicsFacet {
     entity: EntityId,
-    physics: &'a PhysicsWorld,
+    physics: *const PhysicsWorld,
     commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
-impl<'a> PhysicsFacet<'a> {
+impl PhysicsFacet {
     pub fn velocity(&mut self) -> RhaiResult<Vec2> {
-        match self.physics.linear_velocity(self.entity) {
+        match unsafe { &*self.physics }.linear_velocity(self.entity) {
             Some(v) => Ok(v),
             None => missing_component("Physics"),
         }
@@ -630,12 +634,12 @@ impl<'a> PhysicsFacet<'a> {
 }
 
 #[derive(Clone)]
-pub struct SpriteFacet<'a> {
+pub struct SpriteFacet {
     entity: EntityId,
     commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
-impl<'a> SpriteFacet<'a> {
+impl SpriteFacet {
     pub fn set_visible(&mut self, visible: bool) -> RhaiResult<()> {
         if let Ok(mut commands) = self.commands.lock() {
             commands.set_sprite_visibility(self.entity, visible);
@@ -780,7 +784,7 @@ impl ScriptRuntime {
                     (true, true) => "on_trigger_enter",
                     (true, false) => "on_trigger_exit",
                 };
-                self.call_script_fn(instance, function_name, (&mut ctx, other.to_u32() as i64))?;
+                self.call_script_fn(instance, function_name, (ctx, other.to_u32() as i64))?;
             }
         }
 
@@ -805,14 +809,24 @@ impl ScriptRuntime {
                 };
                 desired.push(key);
 
-                let module = self.load_module(&attachment.path)?;
+                self.load_module(&attachment.path)?;
+                let module_modified = self.modules[&attachment.path].modified;
 
-                let entry = self.instances.entry(key).or_insert_with(|| {
-                    ScriptInstance::new(key, attachment.path.clone(), &attachment.params, module)
-                });
+                let entry = {
+                    let module = &self.modules[&attachment.path];
+                    self.instances.entry(key).or_insert_with(|| {
+                        ScriptInstance::new(
+                            key,
+                            attachment.path.clone(),
+                            &attachment.params,
+                            module,
+                        )
+                    })
+                };
 
-                if self.hot_reload && module.modified != entry.last_loaded {
+                if self.hot_reload && module_modified != entry.last_loaded {
                     self.run_destroy(entry, world, physics, input)?;
+                    let module = &self.modules[&attachment.path];
                     *entry = ScriptInstance::new(
                         key,
                         attachment.path.clone(),
@@ -822,6 +836,7 @@ impl ScriptRuntime {
                 }
 
                 if !entry.has_started {
+                    let module = &self.modules[&attachment.path];
                     self.run_create_and_start(entry, world, physics, module, input)?;
                 }
             }
@@ -869,17 +884,10 @@ impl ScriptRuntime {
                 self.call_script_fn(
                     instance,
                     fn_name,
-                    (
-                        &mut ctx,
-                        if stage == ScriptStage::Update {
-                            dt
-                        } else {
-                            fixed_dt
-                        },
-                    ),
+                    (ctx, if stage == ScriptStage::Update { dt } else { fixed_dt }),
                 )?;
             } else {
-                self.call_script_fn(instance, fn_name, (&mut ctx,))?;
+                self.call_script_fn(instance, fn_name, (ctx,))?;
             }
         }
         Ok(())
@@ -903,8 +911,8 @@ impl ScriptRuntime {
             0.0,
         );
 
-        self.call_script_fn(instance, "on_create", (&mut ctx,))?;
-        self.call_script_fn(instance, "on_start", (&mut ctx,))?;
+        self.call_script_fn(instance, "on_create", (ctx.clone(),))?;
+        self.call_script_fn(instance, "on_start", (ctx,))?;
 
         instance.has_started = true;
         Ok(())
@@ -927,16 +935,14 @@ impl ScriptRuntime {
             0.0,
         );
 
-        self.call_script_fn(instance, "on_destroy", (&mut ctx,))?;
+        self.call_script_fn(instance, "on_destroy", (ctx,))?;
 
         Ok(())
     }
 
-    fn load_module(&mut self, path: &str) -> Result<&ScriptModule> {
-        if !self.hot_reload {
-            if let Some(module) = self.modules.get(path) {
-                return Ok(module);
-            }
+    fn load_module(&mut self, path: &str) -> Result<()> {
+        if !self.hot_reload && self.modules.contains_key(path) {
+            return Ok(());
         }
 
         let contents = fs::read_to_string(Path::new(path))
@@ -946,10 +952,7 @@ impl ScriptRuntime {
         let modified = fs::metadata(path).ok().and_then(|m| m.modified().ok());
         self.modules
             .insert(path.to_string(), ScriptModule { ast, modified });
-        self
-            .modules
-            .get(path)
-            .ok_or_else(|| anyhow!("Module disappeared after load"))
+        Ok(())
     }
 
     fn call_script_fn<A: rhai::FuncArgs + Clone>(
@@ -959,7 +962,10 @@ impl ScriptRuntime {
         args: A,
     ) -> Result<()> {
         let ast = &self.modules[&instance.script_path].ast;
-        match self.engine.call_fn(&mut instance.scope, ast, name, args) {
+        match self
+            .engine
+            .call_fn::<Dynamic>(&mut instance.scope, ast, name, args)
+        {
             Ok(_) => Ok(()),
             Err(err) => match *err {
                 EvalAltResult::ErrorFunctionNotFound(..) => Ok(()),
@@ -982,7 +988,7 @@ fn register_rhai_types(engine: &mut Engine) {
     engine.register_get_set("x", |v: &mut Vec2| v.x, |v: &mut Vec2, x| v.x = x);
     engine.register_get_set("y", |v: &mut Vec2| v.y, |v: &mut Vec2, y| v.y = y);
 
-    engine.register_type_with_name::<ScriptSelf<'static>>("Self");
+    engine.register_type_with_name::<ScriptSelf>("Self");
     engine.register_fn("entity", ScriptSelf::entity);
     engine.register_fn("time", ScriptSelf::time);
     engine.register_get("input", ScriptSelf::input);
@@ -998,31 +1004,31 @@ fn register_rhai_types(engine: &mut Engine) {
     engine.register_fn("delta", TimeFacet::delta);
     engine.register_fn("fixed_delta", TimeFacet::fixed_delta);
 
-    engine.register_type_with_name::<InputFacet<'static>>("Input");
+    engine.register_type_with_name::<InputFacet>("Input");
     engine.register_fn("is_key_down", InputFacet::is_key_down);
     engine.register_fn("is_key_pressed", InputFacet::is_key_pressed);
     engine.register_fn("is_key_released", InputFacet::is_key_released);
     engine.register_fn("mouse_pos_screen", InputFacet::mouse_pos_screen);
 
-    engine.register_type_with_name::<WorldFacet<'static>>("World");
+    engine.register_type_with_name::<WorldFacet>("World");
     engine.register_fn("find_by_tag", WorldFacet::find_by_tag);
     engine.register_fn("despawn", WorldFacet::despawn);
     engine.register_fn("spawn_dynamic", WorldFacet::spawn_dynamic);
     engine.register_fn("spawn_empty", WorldFacet::spawn_empty);
 
-    engine.register_type_with_name::<TransformFacet<'static>>("Transform");
+    engine.register_type_with_name::<TransformFacet>("Transform");
     engine.register_fn("position", TransformFacet::position);
     engine.register_fn("rotation", TransformFacet::rotation);
     engine.register_fn("set_position", TransformFacet::set_position);
     engine.register_fn("set_rotation", TransformFacet::set_rotation);
     engine.register_fn("set_scale", TransformFacet::set_scale);
 
-    engine.register_type_with_name::<PhysicsFacet<'static>>("Physics");
+    engine.register_type_with_name::<PhysicsFacet>("Physics");
     engine.register_fn("velocity", PhysicsFacet::velocity);
     engine.register_fn("set_velocity", PhysicsFacet::set_velocity);
     engine.register_fn("apply_impulse", PhysicsFacet::apply_impulse);
 
-    engine.register_type_with_name::<SpriteFacet<'static>>("Sprite");
+    engine.register_type_with_name::<SpriteFacet>("Sprite");
     engine.register_fn("set_visible", SpriteFacet::set_visible);
     engine.register_fn("set_tint", SpriteFacet::set_tint);
 }
