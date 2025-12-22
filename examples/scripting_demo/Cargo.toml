@@ -1,0 +1,11 @@
+[package]
+name = "scripting_demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+forge2d = { path = "../../forge2d" }
+
+[package.metadata]
+# Example showcasing manual ScriptRuntime wiring
