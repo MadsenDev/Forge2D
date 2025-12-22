@@ -20,14 +20,14 @@ use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{
     math::{Camera2D, Transform2D, Vec2},
-    render::light::{DirectionalLight, PointLight},
-    render::particles::{Particle, ParticleEmitter, ParticleSystem},
+    render::light::PointLight,
+    render::particles::ParticleSystem,
     render::sprite::{Sprite, TextureHandle},
     render::text::{FontHandle, TextRenderer},
 };
 use glam::{Mat4, Vec3};
 use glyphon::{
-    Attrs, Buffer as GlyphonBuffer, Cache, Color, Metrics, Shaping, TextArea,
+    Attrs, Buffer as GlyphonBuffer, Cache, Color, Family, Metrics, Shaping, TextArea,
     TextAtlas, TextRenderer as GlyphonTextRenderer, Viewport,
 };
 
@@ -503,7 +503,7 @@ impl<'window> WgpuBackend<'window> {
     fn ensure_text_components_initialized(&mut self) -> Result<()> {
         // Initialize glyphon components if not already initialized
         if self.text_renderer.text_atlas_mut().is_none() {
-            let (width, height) = (self.surface_config.width, self.surface_config.height);
+            let (_width, _height) = (self.surface_config.width, self.surface_config.height);
             
             // Initialize GPU Cache first (needed for TextAtlas)
             let gpu_cache = Cache::new(&self.device);

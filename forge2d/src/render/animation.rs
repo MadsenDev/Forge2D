@@ -1,5 +1,5 @@
-use crate::math::{Vec2, Transform2D};
-use super::sprite::{Sprite, TextureHandle};
+use crate::math::Transform2D;
+use super::sprite::TextureHandle;
 
 /// A single frame of an animation.
 #[derive(Clone, Debug)]
