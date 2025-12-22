@@ -33,6 +33,14 @@ function App() {
   const [inspectorRefreshTrigger, setInspectorRefreshTrigger] = useState(0);
   const [fileExplorerRefreshToken, setFileExplorerRefreshToken] = useState(0);
 
+  // Track selection and handlers for global shortcuts
+  const selectedEntityIdRef = useRef<number | null>(null);
+  const shortcutHandlersRef = useRef({
+    handleUndo: async () => {},
+    handleRedo: async () => {},
+    handleDeleteEntity: async (_: number) => {},
+  });
+
   // Grid column and row sizes for resizing
   const [columnSizes, setColumnSizes] = useState<number[]>([1.4, 260, 320, 340]);
   const [rowSizes, setRowSizes] = useState<number[]>([1.2, 0.9]);
@@ -242,35 +250,6 @@ function App() {
     }
   };
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      // Ctrl+Z or Cmd+Z for undo
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        await handleUndo();
-      }
-      // Ctrl+Shift+Z or Cmd+Shift+Z for redo
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
-        e.preventDefault();
-        await handleRedo();
-      }
-      // Ctrl+Y for redo (alternative)
-      if ((e.ctrlKey || e.metaKey) && e.key === "y") {
-        e.preventDefault();
-        await handleRedo();
-      }
-      // Delete key to delete selected entity
-      if (e.key === "Delete" && selectedEntityId !== null) {
-        e.preventDefault();
-        await handleDeleteEntity(selectedEntityId);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedEntityId]);
-
   const loadSelection = async () => {
     const selection = await invoke<number[]>("selection_get");
     setSelectedEntityId(selection.length > 0 ? selection[0] : null);
@@ -340,6 +319,55 @@ function App() {
     await refreshEntities();
     await refreshUndoRedo();
   };
+
+  // Keep shortcut handler refs up to date
+  useEffect(() => {
+    selectedEntityIdRef.current = selectedEntityId;
+    shortcutHandlersRef.current = {
+      handleUndo,
+      handleRedo,
+      handleDeleteEntity,
+    };
+  }, [selectedEntityId, handleUndo, handleRedo, handleDeleteEntity]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      // Avoid interfering with text inputs
+      const target = e.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
+
+      const { handleUndo, handleRedo, handleDeleteEntity } =
+        shortcutHandlersRef.current;
+
+      // Ctrl+Z or Cmd+Z for undo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        await handleUndo();
+        return;
+      }
+      // Ctrl+Shift+Z or Cmd+Shift+Z for redo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) {
+        e.preventDefault();
+        await handleRedo();
+        return;
+      }
+      // Ctrl+Y for redo (alternative)
+      if ((e.ctrlKey || e.metaKey) && e.key === "y") {
+        e.preventDefault();
+        await handleRedo();
+        return;
+      }
+      // Delete key to delete selected entity
+      if (e.key === "Delete" && selectedEntityIdRef.current !== null) {
+        e.preventDefault();
+        await handleDeleteEntity(selectedEntityIdRef.current);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const handleNewScene = async () => {
     if (confirm("Create a new scene? All unsaved changes will be lost.")) {
