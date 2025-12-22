@@ -214,6 +214,12 @@ impl Game for ScriptingDemo {
         self.spawn_platform(Vec2::new(300.0, 420.0), Vec2::new(240.0, 24.0))?;
         self.spawn_platform(Vec2::new(520.0, 520.0), Vec2::new(420.0, 24.0))?;
         self.camera.zoom = 1.25;
+
+        // Ensure scripts are attached and their startup callbacks run before the first frame.
+        // This guarantees that `on_start` side effects (logging, tint, etc.) happen even if the
+        // first update is delayed by platform event scheduling.
+        self.runtime
+            .update(&mut self.world, &mut self.physics, ctx.input(), 0.0)?;
         Ok(())
     }
 
