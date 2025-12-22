@@ -1,7 +1,7 @@
 use anyhow::Result;
 use forge2d::{
     BuiltinFont, Camera2D, EngineContext, Game, MouseButton, Sprite,
-    Vec2, VirtualKeyCode,
+    KeyCode, Vec2,
 };
 
 use crate::entities::{EntityType, GameEntity};
@@ -638,16 +638,16 @@ impl Game for AgeOfEmpiresDemo {
         let input = ctx.input();
         
         let mut camera_move = Vec2::ZERO;
-        if input.is_key_down(VirtualKeyCode::Left) || input.is_key_down(VirtualKeyCode::A) {
+        if input.is_key_down(KeyCode::ArrowLeft) || input.is_key_down(KeyCode::KeyA) {
             camera_move.x -= 1.0;
         }
-        if input.is_key_down(VirtualKeyCode::Right) || input.is_key_down(VirtualKeyCode::D) {
+        if input.is_key_down(KeyCode::ArrowRight) || input.is_key_down(KeyCode::KeyD) {
             camera_move.x += 1.0;
         }
-        if input.is_key_down(VirtualKeyCode::Up) || input.is_key_down(VirtualKeyCode::W) {
+        if input.is_key_down(KeyCode::ArrowUp) || input.is_key_down(KeyCode::KeyW) {
             camera_move.y -= 1.0;
         }
-        if input.is_key_down(VirtualKeyCode::Down) || input.is_key_down(VirtualKeyCode::S) {
+        if input.is_key_down(KeyCode::ArrowDown) || input.is_key_down(KeyCode::KeyS) {
             camera_move.y += 1.0;
         }
         
@@ -711,7 +711,7 @@ impl Game for AgeOfEmpiresDemo {
                     }
                 }
                 // Don't select entities when clicking UI
-            } else if input.is_key_down(VirtualKeyCode::LShift) {
+            } else if input.is_key_down(KeyCode::ShiftLeft) {
                 self.building_ghost = Some((EntityType::House, mouse_world));
             } else {
                 self.select_entity_at(mouse_world);
@@ -777,11 +777,11 @@ impl Game for AgeOfEmpiresDemo {
         }
         
         // Cancel building mode with Escape
-        if input.is_key_pressed(VirtualKeyCode::Escape) {
+        if input.is_key_pressed(KeyCode::Escape) {
             self.building_ghost = None;
         }
         
-        if input.is_key_pressed(VirtualKeyCode::V) {
+        if input.is_key_pressed(KeyCode::KeyV) {
             self.try_spawn_villager();
         }
         
@@ -789,7 +789,7 @@ impl Game for AgeOfEmpiresDemo {
         self.remove_depleted_resources();
         
         // Only exit on Escape if not in building mode (building mode cancellation handled above)
-        if input.is_key_pressed(VirtualKeyCode::Escape) && self.building_ghost.is_none() {
+        if input.is_key_pressed(KeyCode::Escape) && self.building_ghost.is_none() {
             ctx.request_exit();
         }
         

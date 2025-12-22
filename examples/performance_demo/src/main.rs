@@ -4,7 +4,7 @@ use forge2d::{
     math::{Camera2D, Vec2},
     physics::{ColliderShape, PhysicsWorld, RigidBodyType},
     render::{Renderer, Sprite, TextureHandle},
-    Engine, Game, World,
+    Engine, Game, KeyCode, World,
 };
 use std::time::Instant;
 
@@ -216,7 +216,7 @@ impl Game for PerformanceDemo {
         let dt = ctx.delta_time().as_secs_f32();
         
         // Toggle auto-spawn
-        if input.is_key_pressed(forge2d::VirtualKeyCode::Space) {
+        if input.is_key_pressed(KeyCode::Space) {
             self.auto_spawn = !self.auto_spawn;
         }
         
@@ -232,12 +232,12 @@ impl Game for PerformanceDemo {
         }
         
         // Spawn large batch with 'S' key
-        if input.is_key_pressed(forge2d::VirtualKeyCode::S) {
+        if input.is_key_pressed(KeyCode::KeyS) {
             self.spawn_batch(100)?;
         }
         
         // Clear all with 'C' key
-        if input.is_key_pressed(forge2d::VirtualKeyCode::C) {
+        if input.is_key_pressed(KeyCode::KeyC) {
             // Remove all entities except ground
             for entity in &self.entities {
                 let _ = self.physics.remove_body(entity.id);
