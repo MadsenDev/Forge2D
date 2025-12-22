@@ -1,7 +1,7 @@
 // forge2d/src/physics.rs
 use anyhow::{anyhow, Result};
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::math::Vec2;
 use crate::world::EntityId;
@@ -153,7 +153,7 @@ impl PhysicsWorld {
         let mut builder = RigidBodyBuilder::new(rb_type)
             .translation(vector![position.x, position.y])
             .rotation(rotation);
-        
+
         // Enable CCD for dynamic bodies to prevent tunneling through thin colliders
         if matches!(body_type, RigidBodyType::Dynamic) {
             builder = builder.ccd_enabled(true);
@@ -389,8 +389,16 @@ impl PhysicsWorld {
     // Queries (engine-facing)
     // ------------------------------
 
-    pub fn cast_ray(&self, origin: Vec2, direction: Vec2, max_toi: f32) -> Option<(EntityId, Vec2, f32)> {
-        let ray = Ray::new(point![origin.x, origin.y], vector![direction.x, direction.y]);
+    pub fn cast_ray(
+        &self,
+        origin: Vec2,
+        direction: Vec2,
+        max_toi: f32,
+    ) -> Option<(EntityId, Vec2, f32)> {
+        let ray = Ray::new(
+            point![origin.x, origin.y],
+            vector![direction.x, direction.y],
+        );
 
         let (col_handle, toi) = self.query_pipeline.cast_ray(
             &self.rigid_bodies,
@@ -425,6 +433,11 @@ impl PhysicsWorld {
         self.entity_to_body.keys().copied().collect()
     }
 
+    /// Return true if an entity currently has a physics body.
+    pub fn has_body(&self, entity: EntityId) -> bool {
+        self.entity_to_body.contains_key(&entity)
+    }
+
     /// Get linear velocity for an entity's body.
     pub fn linear_velocity(&self, entity: EntityId) -> Option<Vec2> {
         let h = *self.entity_to_body.get(&entity)?;
@@ -446,15 +459,22 @@ impl PhysicsWorld {
         let b = self.rigid_bodies.get(h)?;
         match b.body_type() {
             rapier2d::prelude::RigidBodyType::Dynamic => Some(RigidBodyType::Dynamic),
-            rapier2d::prelude::RigidBodyType::KinematicVelocityBased => Some(RigidBodyType::Kinematic),
-            rapier2d::prelude::RigidBodyType::KinematicPositionBased => Some(RigidBodyType::Kinematic),
+            rapier2d::prelude::RigidBodyType::KinematicVelocityBased => {
+                Some(RigidBodyType::Kinematic)
+            }
+            rapier2d::prelude::RigidBodyType::KinematicPositionBased => {
+                Some(RigidBodyType::Kinematic)
+            }
             rapier2d::prelude::RigidBodyType::Fixed => Some(RigidBodyType::Fixed),
         }
     }
 
     /// Get all colliders for an entity.
     /// Returns a vector of (shape, offset, density, friction, restitution, is_sensor) tuples.
-    pub fn get_colliders(&self, entity: EntityId) -> Vec<(ColliderShape, Vec2, f32, f32, f32, bool)> {
+    pub fn get_colliders(
+        &self,
+        entity: EntityId,
+    ) -> Vec<(ColliderShape, Vec2, f32, f32, f32, bool)> {
         let body_handle = match self.entity_to_body.get(&entity) {
             Some(h) => *h,
             None => return Vec::new(),
@@ -465,7 +485,9 @@ impl PhysicsWorld {
             if collider.parent() == Some(body_handle) {
                 // Calculate local offset: collider world pos - body world pos
                 let collider_world_pos = collider.translation();
-                let body_world_pos = self.rigid_bodies.get(body_handle)
+                let body_world_pos = self
+                    .rigid_bodies
+                    .get(body_handle)
                     .map(|b| b.translation())
                     .unwrap_or(collider_world_pos);
                 let offset = Vec2::new(
@@ -474,21 +496,17 @@ impl PhysicsWorld {
                 );
 
                 let shape = match collider.shape().as_typed_shape() {
-                    rapier2d::prelude::TypedShape::Cuboid(cuboid) => {
-                        ColliderShape::Box {
-                            hx: cuboid.half_extents.x,
-                            hy: cuboid.half_extents.y,
-                        }
-                    }
-                    rapier2d::prelude::TypedShape::Ball(ball) => {
-                        ColliderShape::Circle { radius: ball.radius }
-                    }
-                    rapier2d::prelude::TypedShape::Capsule(capsule) => {
-                        ColliderShape::CapsuleY {
-                            half_height: capsule.half_height(),
-                            radius: capsule.radius,
-                        }
-                    }
+                    rapier2d::prelude::TypedShape::Cuboid(cuboid) => ColliderShape::Box {
+                        hx: cuboid.half_extents.x,
+                        hy: cuboid.half_extents.y,
+                    },
+                    rapier2d::prelude::TypedShape::Ball(ball) => ColliderShape::Circle {
+                        radius: ball.radius,
+                    },
+                    rapier2d::prelude::TypedShape::Capsule(capsule) => ColliderShape::CapsuleY {
+                        half_height: capsule.half_height(),
+                        radius: capsule.radius,
+                    },
                     _ => continue, // Skip unsupported shapes
                 };
 
@@ -520,7 +538,10 @@ impl PhysicsWorld {
         match s {
             ColliderShape::Box { hx, hy } => SharedShape::cuboid(hx, hy),
             ColliderShape::Circle { radius } => SharedShape::ball(radius),
-            ColliderShape::CapsuleY { half_height, radius } => SharedShape::capsule_y(half_height, radius),
+            ColliderShape::CapsuleY {
+                half_height,
+                radius,
+            } => SharedShape::capsule_y(half_height, radius),
         }
     }
 
@@ -555,7 +576,11 @@ impl PhysicsWorld {
         // with the is_trigger flag set, so no separate intersection handling needed.
     }
 
-    fn map_pair(&self, c1: ColliderHandle, c2: ColliderHandle) -> Option<(EntityId, EntityId, bool)> {
+    fn map_pair(
+        &self,
+        c1: ColliderHandle,
+        c2: ColliderHandle,
+    ) -> Option<(EntityId, EntityId, bool)> {
         let col1 = self.colliders.get(c1)?;
         let col2 = self.colliders.get(c2)?;
         let b1 = col1.parent()?;

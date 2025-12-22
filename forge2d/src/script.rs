@@ -1,0 +1,1034 @@
+use std::collections::{BTreeMap, HashMap};
+use std::fs;
+use std::path::Path;
+use std::time::SystemTime;
+
+use anyhow::{anyhow, Result};
+use rhai::{Dynamic, Engine, EvalAltResult, Float, Map, Scope};
+
+use crate::entities::{SpriteComponent, Transform};
+use crate::input::InputState;
+use crate::math::Vec2;
+use crate::physics::{PhysicsEvent, PhysicsWorld, RigidBodyType};
+use crate::world::{EntityId, World};
+
+type RhaiResult<T> = Result<T, Box<EvalAltResult>>;
+
+/// Simple configuration value that can be passed from Rust into a script.
+#[derive(Clone, Debug)]
+pub enum ScriptValue {
+    Number(f32),
+    Bool(bool),
+    Text(String),
+    Vec2(Vec2),
+}
+
+impl From<f32> for ScriptValue {
+    fn from(value: f32) -> Self {
+        Self::Number(value)
+    }
+}
+
+impl From<bool> for ScriptValue {
+    fn from(value: bool) -> Self {
+        Self::Bool(value)
+    }
+}
+
+impl From<&str> for ScriptValue {
+    fn from(value: &str) -> Self {
+        Self::Text(value.to_string())
+    }
+}
+
+impl From<String> for ScriptValue {
+    fn from(value: String) -> Self {
+        Self::Text(value)
+    }
+}
+
+impl From<Vec2> for ScriptValue {
+    fn from(value: Vec2) -> Self {
+        Self::Vec2(value)
+    }
+}
+
+impl ScriptValue {
+    fn to_dynamic(&self) -> Dynamic {
+        match self {
+            ScriptValue::Number(v) => Dynamic::from_float(*v as Float),
+            ScriptValue::Bool(v) => Dynamic::from_bool(*v),
+            ScriptValue::Text(v) => Dynamic::from(v.clone()),
+            ScriptValue::Vec2(v) => Dynamic::from(*v),
+        }
+    }
+}
+
+/// Arbitrary parameters that can be consumed by a script on startup.
+#[derive(Clone, Debug, Default)]
+pub struct ScriptParams {
+    values: HashMap<String, ScriptValue>,
+}
+
+impl ScriptParams {
+    /// Insert a configurable parameter for the script.
+    pub fn insert(mut self, key: impl Into<String>, value: impl Into<ScriptValue>) -> Self {
+        self.values.insert(key.into(), value.into());
+        self
+    }
+
+    fn as_rhai_map(&self) -> Map {
+        let mut map = Map::new();
+        for (k, v) in &self.values {
+            map.insert(k.clone().into(), v.to_dynamic());
+        }
+        map
+    }
+}
+
+/// The script component stored on entities. Contains an ordered list of script attachments.
+#[derive(Clone, Debug, Default)]
+pub struct ScriptComponent {
+    pub scripts: Vec<ScriptAttachment>,
+}
+
+impl ScriptComponent {
+    /// Attach a script module (file path or asset identifier) with optional parameters.
+    pub fn with_script(mut self, path: impl Into<String>, params: ScriptParams) -> Self {
+        self.scripts.push(ScriptAttachment {
+            path: path.into(),
+            params,
+        });
+        self
+    }
+}
+
+/// Single script entry in a ScriptComponent.
+#[derive(Clone, Debug)]
+pub struct ScriptAttachment {
+    pub path: String,
+    pub params: ScriptParams,
+}
+
+struct ScriptModule {
+    ast: rhai::AST,
+    modified: Option<SystemTime>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct ScriptInstanceKey {
+    entity: EntityId,
+    slot: u32,
+}
+
+struct ScriptInstance {
+    key: ScriptInstanceKey,
+    script_path: String,
+    scope: Scope<'static>,
+    has_started: bool,
+    last_loaded: Option<SystemTime>,
+}
+
+impl ScriptInstance {
+    fn new(
+        key: ScriptInstanceKey,
+        script_path: String,
+        params: &ScriptParams,
+        module: &ScriptModule,
+    ) -> Self {
+        let mut scope = Scope::new();
+        scope.push_dynamic("params", params.as_rhai_map().into());
+
+        Self {
+            key,
+            script_path,
+            scope: scope.into_static(),
+            has_started: false,
+            last_loaded: module.modified,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct ScriptCommandBuffer {
+    commands: Vec<ScriptCommand>,
+    // Spawn uses a predictable insertion order
+    pending_spawns: Vec<SpawnRequest>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ScriptCommand {
+    SetTransform {
+        entity: EntityId,
+        position: Option<Vec2>,
+        rotation: Option<f32>,
+        scale: Option<Vec2>,
+    },
+    SetSpriteVisibility {
+        entity: EntityId,
+        visible: bool,
+    },
+    SetSpriteTint {
+        entity: EntityId,
+        tint: [f32; 4],
+    },
+    ApplyImpulse {
+        entity: EntityId,
+        impulse: Vec2,
+    },
+    SetVelocity {
+        entity: EntityId,
+        velocity: Vec2,
+    },
+    Despawn {
+        entity: EntityId,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct SpawnRequest {
+    pub body: SpawnBody,
+    pub initial_velocity: Option<Vec2>,
+    pub tag: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub enum SpawnBody {
+    Empty { position: Option<Vec2> },
+    Dynamic { position: Vec2 },
+}
+
+impl ScriptCommandBuffer {
+    pub fn set_transform(
+        &mut self,
+        entity: EntityId,
+        position: Option<Vec2>,
+        rotation: Option<f32>,
+        scale: Option<Vec2>,
+    ) {
+        self.commands.push(ScriptCommand::SetTransform {
+            entity,
+            position,
+            rotation,
+            scale,
+        });
+    }
+
+    pub fn set_sprite_visibility(&mut self, entity: EntityId, visible: bool) {
+        self.commands
+            .push(ScriptCommand::SetSpriteVisibility { entity, visible });
+    }
+
+    pub fn set_sprite_tint(&mut self, entity: EntityId, tint: [f32; 4]) {
+        self.commands
+            .push(ScriptCommand::SetSpriteTint { entity, tint });
+    }
+
+    pub fn apply_impulse(&mut self, entity: EntityId, impulse: Vec2) {
+        self.commands
+            .push(ScriptCommand::ApplyImpulse { entity, impulse });
+    }
+
+    pub fn set_velocity(&mut self, entity: EntityId, velocity: Vec2) {
+        self.commands
+            .push(ScriptCommand::SetVelocity { entity, velocity });
+    }
+
+    pub fn spawn(&mut self, request: SpawnRequest) {
+        self.pending_spawns.push(request);
+    }
+
+    pub fn despawn(&mut self, entity: EntityId) {
+        self.commands.push(ScriptCommand::Despawn { entity });
+    }
+
+    pub fn apply(&mut self, world: &mut World, physics: &mut PhysicsWorld) {
+        for request in self.pending_spawns.drain(..) {
+            let entity = world.spawn();
+            match request.body {
+                SpawnBody::Empty { position } => {
+                    if let Some(pos) = position {
+                        world.insert(entity, Transform::new(pos));
+                    }
+                }
+                SpawnBody::Dynamic { position } => {
+                    world.insert(entity, Transform::new(position));
+                    let _ = physics.create_body(entity, RigidBodyType::Dynamic, position, 0.0);
+                }
+            }
+
+            if let Some(initial_velocity) = request.initial_velocity {
+                physics.set_linear_velocity(entity, initial_velocity);
+            }
+
+            if let Some(tag) = request.tag {
+                world.insert(entity, ScriptTag(tag));
+            }
+        }
+
+        for command in self.commands.drain(..) {
+            match command {
+                ScriptCommand::SetTransform {
+                    entity,
+                    position,
+                    rotation,
+                    scale,
+                } => {
+                    if let Some(transform) = world.get_mut::<Transform>(entity) {
+                        if let Some(p) = position {
+                            transform.position = p;
+                            physics.set_body_position(entity, p);
+                        }
+                        if let Some(r) = rotation {
+                            transform.rotation = r;
+                            physics.set_body_rotation(entity, r);
+                        }
+                        if let Some(s) = scale {
+                            transform.scale = s;
+                        }
+                    }
+                }
+                ScriptCommand::SetSpriteVisibility { entity, visible } => {
+                    if let Some(sprite) = world.get_mut::<SpriteComponent>(entity) {
+                        sprite.visible = visible;
+                    }
+                }
+                ScriptCommand::SetSpriteTint { entity, tint } => {
+                    if let Some(sprite) = world.get_mut::<SpriteComponent>(entity) {
+                        sprite.sprite.tint = tint;
+                    }
+                }
+                ScriptCommand::ApplyImpulse { entity, impulse } => {
+                    physics.apply_impulse(entity, impulse);
+                }
+                ScriptCommand::SetVelocity { entity, velocity } => {
+                    physics.set_linear_velocity(entity, velocity);
+                }
+                ScriptCommand::Despawn { entity } => {
+                    physics.remove_body(entity);
+                    world.despawn(entity);
+                }
+            }
+        }
+    }
+}
+
+/// Tag component that scripts can query for targeted entity lookups.
+#[derive(Clone, Debug)]
+pub struct ScriptTag(pub String);
+
+fn missing_component<T: Default>(name: &str) -> RhaiResult<T> {
+    #[cfg(debug_assertions)]
+    {
+        Err(format!("{name} component missing on entity").into())
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        Ok(T::default())
+    }
+}
+
+/// Self handle exposed to Rhai scripts. Provides access to facets and engine views.
+pub struct ScriptSelf<'a> {
+    entity: EntityId,
+    world: &'a World,
+    physics: &'a PhysicsWorld,
+    input: &'a InputState,
+    commands: &'a mut ScriptCommandBuffer,
+    dt: f32,
+    fixed_dt: f32,
+}
+
+impl<'a> ScriptSelf<'a> {
+    fn new(
+        entity: EntityId,
+        world: &'a World,
+        physics: &'a PhysicsWorld,
+        input: &'a InputState,
+        commands: &'a mut ScriptCommandBuffer,
+        dt: f32,
+        fixed_dt: f32,
+    ) -> Self {
+        Self {
+            entity,
+            world,
+            physics,
+            input,
+            commands,
+            dt,
+            fixed_dt,
+        }
+    }
+
+    /// Owning entity id.
+    pub fn entity(&mut self) -> i64 {
+        self.entity.to_u32() as i64
+    }
+
+    pub fn time(&mut self) -> TimeFacet {
+        TimeFacet {
+            dt: self.dt,
+            fixed_dt: self.fixed_dt,
+        }
+    }
+
+    pub fn input(&mut self) -> InputFacet<'_> {
+        InputFacet { input: self.input }
+    }
+
+    pub fn world(&mut self) -> WorldFacet<'_> {
+        WorldFacet {
+            world: self.world,
+            commands: self.commands,
+        }
+    }
+
+    fn transform_facet(&mut self) -> Option<TransformFacet<'_>> {
+        self.world
+            .get::<Transform>(self.entity)
+            .map(|_| TransformFacet {
+                entity: self.entity,
+                world: self.world,
+                commands: self.commands,
+            })
+    }
+
+    fn physics_facet(&mut self) -> Option<PhysicsFacet<'_>> {
+        self.physics.has_body(self.entity).then(|| PhysicsFacet {
+            entity: self.entity,
+            physics: self.physics,
+            commands: self.commands,
+        })
+    }
+
+    fn sprite_facet(&mut self) -> Option<SpriteFacet<'_>> {
+        self.world
+            .get::<SpriteComponent>(self.entity)
+            .map(|_| SpriteFacet {
+                entity: self.entity,
+                commands: self.commands,
+            })
+    }
+
+    pub fn transform(&mut self) -> Dynamic {
+        self.transform_facet()
+            .map(Dynamic::from)
+            .unwrap_or(Dynamic::UNIT)
+    }
+
+    pub fn physics(&mut self) -> Dynamic {
+        self.physics_facet()
+            .map(Dynamic::from)
+            .unwrap_or(Dynamic::UNIT)
+    }
+
+    pub fn sprite(&mut self) -> Dynamic {
+        self.sprite_facet()
+            .map(Dynamic::from)
+            .unwrap_or(Dynamic::UNIT)
+    }
+
+    // Optional convenience aliases
+    pub fn position(&mut self) -> RhaiResult<Vec2> {
+        match self.transform_facet() {
+            Some(mut t) => t.position(),
+            None => missing_component("Transform"),
+        }
+    }
+
+    pub fn set_position(&mut self, pos: Vec2) -> RhaiResult<()> {
+        match self.transform_facet() {
+            Some(mut t) => t.set_position(pos),
+            None => missing_component("Transform"),
+        }
+    }
+
+    pub fn apply_impulse(&mut self, impulse: Vec2) -> RhaiResult<()> {
+        match self.physics_facet() {
+            Some(mut p) => p.apply_impulse(impulse),
+            None => missing_component("Physics"),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TimeFacet {
+    dt: f32,
+    fixed_dt: f32,
+}
+
+impl TimeFacet {
+    pub fn delta(&mut self) -> f32 {
+        self.dt
+    }
+
+    pub fn fixed_delta(&mut self) -> f32 {
+        self.fixed_dt
+    }
+}
+
+pub struct InputFacet<'a> {
+    input: &'a InputState,
+}
+
+impl<'a> InputFacet<'a> {
+    pub fn is_key_down(&mut self, name: &str) -> bool {
+        parse_key(name)
+            .map(|k| self.input.is_key_down(k))
+            .unwrap_or(false)
+    }
+
+    pub fn is_key_pressed(&mut self, name: &str) -> bool {
+        parse_key(name)
+            .map(|k| self.input.is_key_pressed(k))
+            .unwrap_or(false)
+    }
+
+    pub fn is_key_released(&mut self, name: &str) -> bool {
+        parse_key(name)
+            .map(|k| self.input.is_key_released(k))
+            .unwrap_or(false)
+    }
+
+    pub fn mouse_pos_screen(&mut self) -> Vec2 {
+        let (x, y) = self.input.mouse_screen_pixels();
+        Vec2::new(x, y)
+    }
+}
+
+pub struct WorldFacet<'a> {
+    world: &'a World,
+    commands: &'a mut ScriptCommandBuffer,
+}
+
+impl<'a> WorldFacet<'a> {
+    pub fn find_by_tag(&mut self, tag: &str) -> Option<i64> {
+        for (entity, t) in self.world.query::<ScriptTag>() {
+            if t.0 == tag {
+                return Some(entity.to_u32() as i64);
+            }
+        }
+        None
+    }
+
+    pub fn despawn(&mut self, entity_raw: i64) -> RhaiResult<()> {
+        if entity_raw < 0 {
+            return Err("Entity id must be non-negative".into());
+        }
+
+        let entity = EntityId(entity_raw as u32);
+        if !self.world.is_alive(entity) {
+            #[cfg(debug_assertions)]
+            {
+                return Err(format!("Entity {entity_raw} is not alive").into());
+            }
+
+            #[cfg(not(debug_assertions))]
+            {
+                return Ok(());
+            }
+        }
+
+        self.commands.despawn(entity);
+        Ok(())
+    }
+
+    pub fn spawn_dynamic(&mut self, position: Vec2, velocity: Vec2) {
+        self.commands.spawn(SpawnRequest {
+            body: SpawnBody::Dynamic { position },
+            initial_velocity: Some(velocity),
+            tag: None,
+        });
+    }
+
+    pub fn spawn_empty(&mut self, position: Option<Vec2>, tag: Option<String>) {
+        self.commands.spawn(SpawnRequest {
+            body: SpawnBody::Empty { position },
+            initial_velocity: None,
+            tag,
+        });
+    }
+}
+
+#[derive(Clone)]
+pub struct TransformFacet<'a> {
+    entity: EntityId,
+    world: &'a World,
+    commands: &'a mut ScriptCommandBuffer,
+}
+
+impl<'a> TransformFacet<'a> {
+    pub fn position(&mut self) -> RhaiResult<Vec2> {
+        match self.world.get::<Transform>(self.entity) {
+            Some(t) => Ok(t.position),
+            None => missing_component("Transform"),
+        }
+    }
+
+    pub fn rotation(&mut self) -> RhaiResult<f32> {
+        match self.world.get::<Transform>(self.entity) {
+            Some(t) => Ok(t.rotation),
+            None => missing_component("Transform"),
+        }
+    }
+
+    pub fn set_position(&mut self, pos: Vec2) -> RhaiResult<()> {
+        self.commands
+            .set_transform(self.entity, Some(pos), None, None);
+        Ok(())
+    }
+
+    pub fn set_rotation(&mut self, rot: f32) -> RhaiResult<()> {
+        self.commands
+            .set_transform(self.entity, None, Some(rot), None);
+        Ok(())
+    }
+
+    pub fn set_scale(&mut self, scale: Vec2) -> RhaiResult<()> {
+        self.commands
+            .set_transform(self.entity, None, None, Some(scale));
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct PhysicsFacet<'a> {
+    entity: EntityId,
+    physics: &'a PhysicsWorld,
+    commands: &'a mut ScriptCommandBuffer,
+}
+
+impl<'a> PhysicsFacet<'a> {
+    pub fn velocity(&mut self) -> RhaiResult<Vec2> {
+        match self.physics.linear_velocity(self.entity) {
+            Some(v) => Ok(v),
+            None => missing_component("Physics"),
+        }
+    }
+
+    pub fn set_velocity(&mut self, velocity: Vec2) -> RhaiResult<()> {
+        self.commands.set_velocity(self.entity, velocity);
+        Ok(())
+    }
+
+    pub fn apply_impulse(&mut self, impulse: Vec2) -> RhaiResult<()> {
+        self.commands.apply_impulse(self.entity, impulse);
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct SpriteFacet<'a> {
+    entity: EntityId,
+    commands: &'a mut ScriptCommandBuffer,
+}
+
+impl<'a> SpriteFacet<'a> {
+    pub fn set_visible(&mut self, visible: bool) -> RhaiResult<()> {
+        self.commands.set_sprite_visibility(self.entity, visible);
+        Ok(())
+    }
+
+    pub fn set_tint(&mut self, tint: [f32; 4]) -> RhaiResult<()> {
+        self.commands.set_sprite_tint(self.entity, tint);
+        Ok(())
+    }
+}
+
+/// Central runtime that owns the embedded scripting engine and per-entity instances.
+pub struct ScriptRuntime {
+    engine: Engine,
+    modules: HashMap<String, ScriptModule>,
+    instances: BTreeMap<ScriptInstanceKey, ScriptInstance>,
+    command_buffer: ScriptCommandBuffer,
+    hot_reload: bool,
+}
+
+impl ScriptRuntime {
+    /// Create a new runtime with Rhai backend and built-in API bindings.
+    pub fn new() -> Self {
+        let mut engine = Engine::new();
+        register_rhai_types(&mut engine);
+
+        Self {
+            engine,
+            modules: HashMap::new(),
+            instances: BTreeMap::new(),
+            command_buffer: ScriptCommandBuffer::default(),
+            hot_reload: false,
+        }
+    }
+
+    /// Toggle hot reload for script files on disk.
+    pub fn with_hot_reload(mut self, enabled: bool) -> Self {
+        self.hot_reload = enabled;
+        self
+    }
+
+    /// Drive `on_update` for all scripts.
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        physics: &mut PhysicsWorld,
+        input: &InputState,
+        dt: f32,
+    ) -> Result<()> {
+        self.sync_instances(world, physics, input)?;
+        self.run_stage(world, physics, input, dt, 0.0, ScriptStage::Update)?;
+        self.command_buffer.apply(world, physics);
+        Ok(())
+    }
+
+    /// Drive `on_fixed_update` for all scripts.
+    pub fn fixed_update(
+        &mut self,
+        world: &mut World,
+        physics: &mut PhysicsWorld,
+        input: &InputState,
+        fixed_dt: f32,
+    ) -> Result<()> {
+        self.sync_instances(world, physics, input)?;
+        self.run_stage(
+            world,
+            physics,
+            input,
+            0.0,
+            fixed_dt,
+            ScriptStage::FixedUpdate,
+        )?;
+        self.command_buffer.apply(world, physics);
+        Ok(())
+    }
+
+    /// Dispatch physics collision/trigger events into script callbacks.
+    pub fn handle_physics_events(
+        &mut self,
+        events: &[PhysicsEvent],
+        world: &mut World,
+        physics: &mut PhysicsWorld,
+        input: &InputState,
+    ) -> Result<()> {
+        for event in events {
+            let (entity, other, is_trigger, started) = match event {
+                PhysicsEvent::CollisionEnter { a, b } => (*a, *b, false, true),
+                PhysicsEvent::CollisionExit { a, b } => (*a, *b, false, false),
+                PhysicsEvent::TriggerEnter { a, b } => (*a, *b, true, true),
+                PhysicsEvent::TriggerExit { a, b } => (*a, *b, true, false),
+            };
+
+            self.run_event(entity, other, is_trigger, started, world, physics, input)?;
+            self.run_event(other, entity, is_trigger, started, world, physics, input)?;
+        }
+
+        self.command_buffer.apply(world, physics);
+        Ok(())
+    }
+
+    fn run_event(
+        &mut self,
+        entity: EntityId,
+        other: EntityId,
+        is_trigger: bool,
+        started: bool,
+        world: &World,
+        physics: &PhysicsWorld,
+        input: &InputState,
+    ) -> Result<()> {
+        let key_filter: Vec<_> = self
+            .instances
+            .keys()
+            .filter(|k| k.entity == entity)
+            .cloned()
+            .collect();
+
+        for key in key_filter {
+            if let Some(instance) = self.instances.get_mut(&key) {
+                let mut ctx = ScriptSelf::new(
+                    entity,
+                    world,
+                    physics,
+                    input,
+                    &mut self.command_buffer,
+                    0.0,
+                    0.0,
+                );
+                let function_name = match (is_trigger, started) {
+                    (false, true) => "on_collision_enter",
+                    (false, false) => "on_collision_exit",
+                    (true, true) => "on_trigger_enter",
+                    (true, false) => "on_trigger_exit",
+                };
+                self.call_script_fn(instance, function_name, (&mut ctx, other.to_u32() as i64))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn sync_instances(
+        &mut self,
+        world: &World,
+        physics: &PhysicsWorld,
+        input: &InputState,
+    ) -> Result<()> {
+        let mut desired = Vec::new();
+        let mut pairs = world.query::<ScriptComponent>();
+        pairs.sort_by_key(|(entity, _)| entity.to_u32());
+
+        for (entity, scripts) in pairs {
+            for (slot, attachment) in scripts.scripts.iter().enumerate() {
+                let key = ScriptInstanceKey {
+                    entity,
+                    slot: slot as u32,
+                };
+                desired.push(key);
+
+                let module = self.load_module(&attachment.path)?;
+
+                let entry = self.instances.entry(key).or_insert_with(|| {
+                    ScriptInstance::new(key, attachment.path.clone(), &attachment.params, module)
+                });
+
+                if self.hot_reload && module.modified != entry.last_loaded {
+                    self.run_destroy(entry, world, physics, input)?;
+                    *entry = ScriptInstance::new(
+                        key,
+                        attachment.path.clone(),
+                        &attachment.params,
+                        module,
+                    );
+                }
+
+                if !entry.has_started {
+                    self.run_create_and_start(entry, world, physics, module, input)?;
+                }
+            }
+        }
+
+        let existing: Vec<_> = self.instances.keys().cloned().collect();
+        for key in existing {
+            if !desired.contains(&key) {
+                if let Some(mut inst) = self.instances.remove(&key) {
+                    self.run_destroy(&mut inst, world, physics, input)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn run_stage(
+        &mut self,
+        world: &World,
+        physics: &PhysicsWorld,
+        input: &InputState,
+        dt: f32,
+        fixed_dt: f32,
+        stage: ScriptStage,
+    ) -> Result<()> {
+        for instance in self.instances.values_mut() {
+            let mut ctx = ScriptSelf::new(
+                instance.key.entity,
+                world,
+                physics,
+                input,
+                &mut self.command_buffer,
+                dt,
+                fixed_dt,
+            );
+
+            let (fn_name, include_dt) = match stage {
+                ScriptStage::Update => ("on_update", true),
+                ScriptStage::FixedUpdate => ("on_fixed_update", true),
+                ScriptStage::Draw => ("on_draw", false),
+            };
+
+            if include_dt {
+                self.call_script_fn(
+                    instance,
+                    fn_name,
+                    (
+                        &mut ctx,
+                        if stage == ScriptStage::Update {
+                            dt
+                        } else {
+                            fixed_dt
+                        },
+                    ),
+                )?;
+            } else {
+                self.call_script_fn(instance, fn_name, (&mut ctx,))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn run_create_and_start(
+        &mut self,
+        instance: &mut ScriptInstance,
+        world: &World,
+        physics: &PhysicsWorld,
+        module: &ScriptModule,
+        input: &InputState,
+    ) -> Result<()> {
+        let mut ctx = ScriptSelf::new(
+            instance.key.entity,
+            world,
+            physics,
+            input,
+            &mut self.command_buffer,
+            0.0,
+            0.0,
+        );
+
+        self.call_script_fn(instance, "on_create", (&mut ctx,))?;
+        self.call_script_fn(instance, "on_start", (&mut ctx,))?;
+
+        instance.has_started = true;
+        Ok(())
+    }
+
+    fn run_destroy(
+        &mut self,
+        instance: &mut ScriptInstance,
+        world: &World,
+        physics: &PhysicsWorld,
+        input: &InputState,
+    ) -> Result<()> {
+        let mut ctx = ScriptSelf::new(
+            instance.key.entity,
+            world,
+            physics,
+            input,
+            &mut self.command_buffer,
+            0.0,
+            0.0,
+        );
+
+        self.call_script_fn(instance, "on_destroy", (&mut ctx,))?;
+
+        Ok(())
+    }
+
+    fn load_module(&mut self, path: &str) -> Result<&ScriptModule> {
+        if let Some(module) = self.modules.get(path) {
+            if !self.hot_reload {
+                return Ok(module);
+            }
+        }
+
+        let contents = fs::read_to_string(Path::new(path))
+            .map_err(|err| anyhow!("Failed to load script {path}: {err}"))?;
+
+        let ast = self.engine.compile(contents)?;
+        let modified = fs::metadata(path).ok().and_then(|m| m.modified().ok());
+        self.modules
+            .insert(path.to_string(), ScriptModule { ast, modified });
+        Ok(self
+            .modules
+            .get(path)
+            .ok_or_else(|| anyhow!("Module disappeared after load"))?)
+    }
+
+    fn call_script_fn<A: rhai::FuncArgs + Clone>(
+        &self,
+        instance: &mut ScriptInstance,
+        name: &str,
+        args: A,
+    ) -> Result<()> {
+        let ast = &self.modules[&instance.script_path].ast;
+        match self
+            .engine
+            .call_fn::<_, ()>(&mut instance.scope, ast, name, args)
+        {
+            Ok(_) => Ok(()),
+            Err(err) => match *err {
+                EvalAltResult::ErrorFunctionNotFound(..) => Ok(()),
+                _ => Err(anyhow!(err.to_string())),
+            },
+        }
+    }
+}
+
+enum ScriptStage {
+    Update,
+    FixedUpdate,
+    Draw,
+}
+
+fn register_rhai_types(engine: &mut Engine) {
+    engine.register_type_with_name::<Vec2>("Vec2");
+    engine.register_fn("vec2", Vec2::new);
+    engine.register_get_set("x", |v: &mut Vec2| v.x, |v: &mut Vec2, x| v.x = x);
+    engine.register_get_set("y", |v: &mut Vec2| v.y, |v: &mut Vec2, y| v.y = y);
+
+    engine.register_type_with_name::<ScriptSelf>("Self");
+    engine.register_fn("entity", ScriptSelf::entity);
+    engine.register_fn("time", ScriptSelf::time);
+    engine.register_get("input", ScriptSelf::input);
+    engine.register_fn("world", ScriptSelf::world);
+    engine.register_fn("transform", ScriptSelf::transform);
+    engine.register_fn("physics", ScriptSelf::physics);
+    engine.register_fn("sprite", ScriptSelf::sprite);
+    engine.register_fn("position", ScriptSelf::position);
+    engine.register_fn("set_position", ScriptSelf::set_position);
+    engine.register_fn("apply_impulse", ScriptSelf::apply_impulse);
+
+    engine.register_type_with_name::<TimeFacet>("Time");
+    engine.register_fn("delta", TimeFacet::delta);
+    engine.register_fn("fixed_delta", TimeFacet::fixed_delta);
+
+    engine.register_type_with_name::<InputFacet>("Input");
+    engine.register_fn("is_key_down", InputFacet::is_key_down);
+    engine.register_fn("is_key_pressed", InputFacet::is_key_pressed);
+    engine.register_fn("is_key_released", InputFacet::is_key_released);
+    engine.register_fn("mouse_pos_screen", InputFacet::mouse_pos_screen);
+
+    engine.register_type_with_name::<WorldFacet>("World");
+    engine.register_fn("find_by_tag", WorldFacet::find_by_tag);
+    engine.register_fn("despawn", WorldFacet::despawn);
+    engine.register_fn("spawn_dynamic", WorldFacet::spawn_dynamic);
+    engine.register_fn("spawn_empty", WorldFacet::spawn_empty);
+
+    engine.register_type_with_name::<TransformFacet>("Transform");
+    engine.register_fn("position", TransformFacet::position);
+    engine.register_fn("rotation", TransformFacet::rotation);
+    engine.register_fn("set_position", TransformFacet::set_position);
+    engine.register_fn("set_rotation", TransformFacet::set_rotation);
+    engine.register_fn("set_scale", TransformFacet::set_scale);
+
+    engine.register_type_with_name::<PhysicsFacet>("Physics");
+    engine.register_fn("velocity", PhysicsFacet::velocity);
+    engine.register_fn("set_velocity", PhysicsFacet::set_velocity);
+    engine.register_fn("apply_impulse", PhysicsFacet::apply_impulse);
+
+    engine.register_type_with_name::<SpriteFacet>("Sprite");
+    engine.register_fn("set_visible", SpriteFacet::set_visible);
+    engine.register_fn("set_tint", SpriteFacet::set_tint);
+}
+
+fn parse_key(name: &str) -> Option<winit::keyboard::KeyCode> {
+    use winit::keyboard::KeyCode;
+
+    match name {
+        "W" | "w" => Some(KeyCode::KeyW),
+        "A" | "a" => Some(KeyCode::KeyA),
+        "S" | "s" => Some(KeyCode::KeyS),
+        "D" | "d" => Some(KeyCode::KeyD),
+        "Space" | "space" => Some(KeyCode::Space),
+        "Left" | "left" => Some(KeyCode::ArrowLeft),
+        "Right" | "right" => Some(KeyCode::ArrowRight),
+        "Up" | "up" => Some(KeyCode::ArrowUp),
+        "Down" | "down" => Some(KeyCode::ArrowDown),
+        _ => None,
+    }
+}
+
+impl TryFrom<Dynamic> for Vec2 {
+    type Error = Box<EvalAltResult>;
+
+    fn try_from(value: Dynamic) -> Result<Self, Self::Error> {
+        value.cast::<Vec2>().map_err(|v| v.into())
+    }
+}

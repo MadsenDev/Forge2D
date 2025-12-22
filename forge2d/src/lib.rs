@@ -7,8 +7,8 @@ pub mod audio;
 pub mod camera;
 pub mod commands;
 pub mod component_metadata;
-pub mod entities;
 pub mod engine;
+pub mod entities;
 pub mod fonts;
 pub mod grid;
 pub mod hierarchy;
@@ -19,34 +19,51 @@ pub mod pathfinding;
 pub mod physics;
 pub mod render;
 pub mod scene;
+pub mod script;
 pub mod state;
 pub mod world;
 
 pub use crate::assets::AssetManager;
 pub use crate::audio::AudioSystem;
+pub use crate::camera::{update_camera_follow, CameraFollow};
+pub use crate::commands::{
+    AddComponent, Command, CommandHistory, CreateEntity, DeleteEntity, RemoveComponent,
+    SetTransform,
+};
+pub use crate::component_metadata::{
+    register_builtin_metadata, ComponentMetadataHandler, ComponentMetadataRegistry,
+    FieldDescriptor, TransformMetadataHandler,
+};
 pub use crate::engine::{Engine, EngineConfig, EngineContext, Game};
-pub use crate::fonts::BuiltinFont;
-pub use crate::hud::{HudLayer, HudLayout, HudPanel, HudRect, HudSprite, HudText, TextAlign};
-pub use crate::input::{ActionId, AxisBinding, Button, InputMap, InputState};
-pub use crate::camera::{CameraFollow, update_camera_follow};
 pub use crate::entities::{
     AudioSource, CameraComponent, Checkpoint, Collectible, Enemy, Hazard, MovingPlatform,
     PhysicsBody, Player, SpriteComponent, Transform, Trigger,
 };
+pub use crate::fonts::BuiltinFont;
 pub use crate::grid::{Grid, GridCoord, GridPathfinding};
+pub use crate::hierarchy::{
+    get_children, get_parent, get_root, get_world_position, get_world_rotation, get_world_scale,
+    reparent, set_parent,
+};
+pub use crate::hud::{HudLayer, HudLayout, HudPanel, HudRect, HudSprite, HudText, TextAlign};
+pub use crate::input::{ActionId, AxisBinding, Button, InputMap, InputState};
 pub use crate::math::{Camera2D, Transform2D, Vec2};
 pub use crate::pathfinding::{AStarPathfinder, GridNode, PathfindingGrid};
-pub use crate::render::{DirectionalLight, EmissionConfig, Frame, FontHandle, Particle, ParticleEmitter, ParticleSystem, PointLight, Renderer, Sprite, TextureHandle};
-pub use crate::state::{State, StateMachine, StateMachineLike};
 pub use crate::physics::{PhysicsEventCallback, PhysicsWorld};
-pub use rapier2d::prelude::{ImpulseJointHandle, ImpulseJointSet, RigidBodyType};
-pub use rapier2d::prelude::RigidBodyHandle;
-pub use crate::world::{EntityId, World};
-pub use crate::commands::{Command, CommandHistory, CreateEntity, DeleteEntity, SetTransform, AddComponent, RemoveComponent};
-pub use crate::component_metadata::{ComponentMetadataHandler, ComponentMetadataRegistry, FieldDescriptor, TransformMetadataHandler, register_builtin_metadata};
-pub use crate::hierarchy::{get_parent, set_parent, get_children, get_root, get_world_position, get_world_rotation, get_world_scale, reparent};
-pub use crate::scene::{Scene, SerializableComponent, SerializablePhysics, ComponentSerializable, create_scene, restore_scene_physics, restore_scene_physics_preserve};
-pub use winit::{
-    event::MouseButton,
-    keyboard::KeyCode,
+pub use crate::render::{
+    DirectionalLight, EmissionConfig, FontHandle, Frame, Particle, ParticleEmitter, ParticleSystem,
+    PointLight, Renderer, Sprite, TextureHandle,
 };
+pub use crate::scene::{
+    create_scene, restore_scene_physics, restore_scene_physics_preserve, ComponentSerializable,
+    Scene, SerializableComponent, SerializablePhysics,
+};
+pub use crate::script::{
+    InputFacet, PhysicsFacet, ScriptComponent, ScriptParams, ScriptRuntime, ScriptSelf, ScriptTag,
+    ScriptValue, SpriteFacet, TimeFacet, TransformFacet, WorldFacet,
+};
+pub use crate::state::{State, StateMachine, StateMachineLike};
+pub use crate::world::{EntityId, World};
+pub use rapier2d::prelude::RigidBodyHandle;
+pub use rapier2d::prelude::{ImpulseJointHandle, ImpulseJointSet, RigidBodyType};
+pub use winit::{event::MouseButton, keyboard::KeyCode};
