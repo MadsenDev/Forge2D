@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use anyhow::{anyhow, Result};
-use rhai::{Dynamic, Engine, EvalAltResult, Float, Map, Scope};
+use rhai::{Dynamic, Engine, EvalAltResult, Map, Scope, FLOAT};
 
 use crate::entities::{SpriteComponent, Transform};
 use crate::input::InputState;
@@ -56,7 +57,7 @@ impl From<Vec2> for ScriptValue {
 impl ScriptValue {
     fn to_dynamic(&self) -> Dynamic {
         match self {
-            ScriptValue::Number(v) => Dynamic::from_float(*v as Float),
+            ScriptValue::Number(v) => Dynamic::from_float(*v as FLOAT),
             ScriptValue::Bool(v) => Dynamic::from_bool(*v),
             ScriptValue::Text(v) => Dynamic::from(v.clone()),
             ScriptValue::Vec2(v) => Dynamic::from(*v),
@@ -142,7 +143,7 @@ impl ScriptInstance {
         Self {
             key,
             script_path,
-            scope: scope.into_static(),
+            scope,
             has_started: false,
             last_loaded: module.modified,
         }
@@ -330,12 +331,13 @@ fn missing_component<T: Default>(name: &str) -> RhaiResult<T> {
 }
 
 /// Self handle exposed to Rhai scripts. Provides access to facets and engine views.
+#[derive(Clone)]
 pub struct ScriptSelf<'a> {
     entity: EntityId,
     world: &'a World,
     physics: &'a PhysicsWorld,
     input: &'a InputState,
-    commands: &'a mut ScriptCommandBuffer,
+    commands: Arc<Mutex<ScriptCommandBuffer>>,
     dt: f32,
     fixed_dt: f32,
 }
@@ -346,7 +348,7 @@ impl<'a> ScriptSelf<'a> {
         world: &'a World,
         physics: &'a PhysicsWorld,
         input: &'a InputState,
-        commands: &'a mut ScriptCommandBuffer,
+        commands: Arc<Mutex<ScriptCommandBuffer>>,
         dt: f32,
         fixed_dt: f32,
     ) -> Self {
@@ -380,7 +382,7 @@ impl<'a> ScriptSelf<'a> {
     pub fn world(&mut self) -> WorldFacet<'_> {
         WorldFacet {
             world: self.world,
-            commands: self.commands,
+            commands: Arc::clone(&self.commands),
         }
     }
 
@@ -390,7 +392,7 @@ impl<'a> ScriptSelf<'a> {
             .map(|_| TransformFacet {
                 entity: self.entity,
                 world: self.world,
-                commands: self.commands,
+                commands: Arc::clone(&self.commands),
             })
     }
 
@@ -398,7 +400,7 @@ impl<'a> ScriptSelf<'a> {
         self.physics.has_body(self.entity).then(|| PhysicsFacet {
             entity: self.entity,
             physics: self.physics,
-            commands: self.commands,
+            commands: Arc::clone(&self.commands),
         })
     }
 
@@ -407,26 +409,20 @@ impl<'a> ScriptSelf<'a> {
             .get::<SpriteComponent>(self.entity)
             .map(|_| SpriteFacet {
                 entity: self.entity,
-                commands: self.commands,
+                commands: Arc::clone(&self.commands),
             })
     }
 
-    pub fn transform(&mut self) -> Dynamic {
+    pub fn transform(&mut self) -> Option<TransformFacet<'_>> {
         self.transform_facet()
-            .map(Dynamic::from)
-            .unwrap_or(Dynamic::UNIT)
     }
 
-    pub fn physics(&mut self) -> Dynamic {
+    pub fn physics(&mut self) -> Option<PhysicsFacet<'_>> {
         self.physics_facet()
-            .map(Dynamic::from)
-            .unwrap_or(Dynamic::UNIT)
     }
 
-    pub fn sprite(&mut self) -> Dynamic {
+    pub fn sprite(&mut self) -> Option<SpriteFacet<'_>> {
         self.sprite_facet()
-            .map(Dynamic::from)
-            .unwrap_or(Dynamic::UNIT)
     }
 
     // Optional convenience aliases
@@ -468,6 +464,7 @@ impl TimeFacet {
     }
 }
 
+#[derive(Clone)]
 pub struct InputFacet<'a> {
     input: &'a InputState,
 }
@@ -497,9 +494,10 @@ impl<'a> InputFacet<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct WorldFacet<'a> {
     world: &'a World,
-    commands: &'a mut ScriptCommandBuffer,
+    commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
 impl<'a> WorldFacet<'a> {
@@ -530,24 +528,30 @@ impl<'a> WorldFacet<'a> {
             }
         }
 
-        self.commands.despawn(entity);
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.despawn(entity);
+        }
         Ok(())
     }
 
     pub fn spawn_dynamic(&mut self, position: Vec2, velocity: Vec2) {
-        self.commands.spawn(SpawnRequest {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.spawn(SpawnRequest {
             body: SpawnBody::Dynamic { position },
             initial_velocity: Some(velocity),
             tag: None,
         });
+        }
     }
 
     pub fn spawn_empty(&mut self, position: Option<Vec2>, tag: Option<String>) {
-        self.commands.spawn(SpawnRequest {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.spawn(SpawnRequest {
             body: SpawnBody::Empty { position },
             initial_velocity: None,
             tag,
         });
+        }
     }
 }
 
@@ -555,7 +559,7 @@ impl<'a> WorldFacet<'a> {
 pub struct TransformFacet<'a> {
     entity: EntityId,
     world: &'a World,
-    commands: &'a mut ScriptCommandBuffer,
+    commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
 impl<'a> TransformFacet<'a> {
@@ -574,20 +578,23 @@ impl<'a> TransformFacet<'a> {
     }
 
     pub fn set_position(&mut self, pos: Vec2) -> RhaiResult<()> {
-        self.commands
-            .set_transform(self.entity, Some(pos), None, None);
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_transform(self.entity, Some(pos), None, None);
+        }
         Ok(())
     }
 
     pub fn set_rotation(&mut self, rot: f32) -> RhaiResult<()> {
-        self.commands
-            .set_transform(self.entity, None, Some(rot), None);
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_transform(self.entity, None, Some(rot), None);
+        }
         Ok(())
     }
 
     pub fn set_scale(&mut self, scale: Vec2) -> RhaiResult<()> {
-        self.commands
-            .set_transform(self.entity, None, None, Some(scale));
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_transform(self.entity, None, None, Some(scale));
+        }
         Ok(())
     }
 }
@@ -596,7 +603,7 @@ impl<'a> TransformFacet<'a> {
 pub struct PhysicsFacet<'a> {
     entity: EntityId,
     physics: &'a PhysicsWorld,
-    commands: &'a mut ScriptCommandBuffer,
+    commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
 impl<'a> PhysicsFacet<'a> {
@@ -608,12 +615,16 @@ impl<'a> PhysicsFacet<'a> {
     }
 
     pub fn set_velocity(&mut self, velocity: Vec2) -> RhaiResult<()> {
-        self.commands.set_velocity(self.entity, velocity);
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_velocity(self.entity, velocity);
+        }
         Ok(())
     }
 
     pub fn apply_impulse(&mut self, impulse: Vec2) -> RhaiResult<()> {
-        self.commands.apply_impulse(self.entity, impulse);
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.apply_impulse(self.entity, impulse);
+        }
         Ok(())
     }
 }
@@ -621,17 +632,21 @@ impl<'a> PhysicsFacet<'a> {
 #[derive(Clone)]
 pub struct SpriteFacet<'a> {
     entity: EntityId,
-    commands: &'a mut ScriptCommandBuffer,
+    commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
 impl<'a> SpriteFacet<'a> {
     pub fn set_visible(&mut self, visible: bool) -> RhaiResult<()> {
-        self.commands.set_sprite_visibility(self.entity, visible);
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_sprite_visibility(self.entity, visible);
+        }
         Ok(())
     }
 
     pub fn set_tint(&mut self, tint: [f32; 4]) -> RhaiResult<()> {
-        self.commands.set_sprite_tint(self.entity, tint);
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_sprite_tint(self.entity, tint);
+        }
         Ok(())
     }
 }
@@ -641,7 +656,7 @@ pub struct ScriptRuntime {
     engine: Engine,
     modules: HashMap<String, ScriptModule>,
     instances: BTreeMap<ScriptInstanceKey, ScriptInstance>,
-    command_buffer: ScriptCommandBuffer,
+    command_buffer: Arc<Mutex<ScriptCommandBuffer>>,
     hot_reload: bool,
 }
 
@@ -655,7 +670,7 @@ impl ScriptRuntime {
             engine,
             modules: HashMap::new(),
             instances: BTreeMap::new(),
-            command_buffer: ScriptCommandBuffer::default(),
+            command_buffer: Arc::new(Mutex::new(ScriptCommandBuffer::default())),
             hot_reload: false,
         }
     }
@@ -676,7 +691,9 @@ impl ScriptRuntime {
     ) -> Result<()> {
         self.sync_instances(world, physics, input)?;
         self.run_stage(world, physics, input, dt, 0.0, ScriptStage::Update)?;
-        self.command_buffer.apply(world, physics);
+        if let Ok(mut buffer) = self.command_buffer.lock() {
+            buffer.apply(world, physics);
+        }
         Ok(())
     }
 
@@ -697,7 +714,9 @@ impl ScriptRuntime {
             fixed_dt,
             ScriptStage::FixedUpdate,
         )?;
-        self.command_buffer.apply(world, physics);
+        if let Ok(mut buffer) = self.command_buffer.lock() {
+            buffer.apply(world, physics);
+        }
         Ok(())
     }
 
@@ -721,7 +740,9 @@ impl ScriptRuntime {
             self.run_event(other, entity, is_trigger, started, world, physics, input)?;
         }
 
-        self.command_buffer.apply(world, physics);
+        if let Ok(mut buffer) = self.command_buffer.lock() {
+            buffer.apply(world, physics);
+        }
         Ok(())
     }
 
@@ -749,7 +770,7 @@ impl ScriptRuntime {
                     world,
                     physics,
                     input,
-                    &mut self.command_buffer,
+                    Arc::clone(&self.command_buffer),
                     0.0,
                     0.0,
                 );
@@ -833,7 +854,7 @@ impl ScriptRuntime {
                 world,
                 physics,
                 input,
-                &mut self.command_buffer,
+                Arc::clone(&self.command_buffer),
                 dt,
                 fixed_dt,
             );
@@ -877,7 +898,7 @@ impl ScriptRuntime {
             world,
             physics,
             input,
-            &mut self.command_buffer,
+            Arc::clone(&self.command_buffer),
             0.0,
             0.0,
         );
@@ -901,7 +922,7 @@ impl ScriptRuntime {
             world,
             physics,
             input,
-            &mut self.command_buffer,
+            Arc::clone(&self.command_buffer),
             0.0,
             0.0,
         );
@@ -912,8 +933,8 @@ impl ScriptRuntime {
     }
 
     fn load_module(&mut self, path: &str) -> Result<&ScriptModule> {
-        if let Some(module) = self.modules.get(path) {
-            if !self.hot_reload {
+        if !self.hot_reload {
+            if let Some(module) = self.modules.get(path) {
                 return Ok(module);
             }
         }
@@ -925,10 +946,10 @@ impl ScriptRuntime {
         let modified = fs::metadata(path).ok().and_then(|m| m.modified().ok());
         self.modules
             .insert(path.to_string(), ScriptModule { ast, modified });
-        Ok(self
+        self
             .modules
             .get(path)
-            .ok_or_else(|| anyhow!("Module disappeared after load"))?)
+            .ok_or_else(|| anyhow!("Module disappeared after load"))
     }
 
     fn call_script_fn<A: rhai::FuncArgs + Clone>(
@@ -938,10 +959,7 @@ impl ScriptRuntime {
         args: A,
     ) -> Result<()> {
         let ast = &self.modules[&instance.script_path].ast;
-        match self
-            .engine
-            .call_fn::<_, ()>(&mut instance.scope, ast, name, args)
-        {
+        match self.engine.call_fn(&mut instance.scope, ast, name, args) {
             Ok(_) => Ok(()),
             Err(err) => match *err {
                 EvalAltResult::ErrorFunctionNotFound(..) => Ok(()),
@@ -951,6 +969,7 @@ impl ScriptRuntime {
     }
 }
 
+#[derive(PartialEq)]
 enum ScriptStage {
     Update,
     FixedUpdate,
@@ -963,7 +982,7 @@ fn register_rhai_types(engine: &mut Engine) {
     engine.register_get_set("x", |v: &mut Vec2| v.x, |v: &mut Vec2, x| v.x = x);
     engine.register_get_set("y", |v: &mut Vec2| v.y, |v: &mut Vec2, y| v.y = y);
 
-    engine.register_type_with_name::<ScriptSelf>("Self");
+    engine.register_type_with_name::<ScriptSelf<'static>>("Self");
     engine.register_fn("entity", ScriptSelf::entity);
     engine.register_fn("time", ScriptSelf::time);
     engine.register_get("input", ScriptSelf::input);
@@ -979,31 +998,31 @@ fn register_rhai_types(engine: &mut Engine) {
     engine.register_fn("delta", TimeFacet::delta);
     engine.register_fn("fixed_delta", TimeFacet::fixed_delta);
 
-    engine.register_type_with_name::<InputFacet>("Input");
+    engine.register_type_with_name::<InputFacet<'static>>("Input");
     engine.register_fn("is_key_down", InputFacet::is_key_down);
     engine.register_fn("is_key_pressed", InputFacet::is_key_pressed);
     engine.register_fn("is_key_released", InputFacet::is_key_released);
     engine.register_fn("mouse_pos_screen", InputFacet::mouse_pos_screen);
 
-    engine.register_type_with_name::<WorldFacet>("World");
+    engine.register_type_with_name::<WorldFacet<'static>>("World");
     engine.register_fn("find_by_tag", WorldFacet::find_by_tag);
     engine.register_fn("despawn", WorldFacet::despawn);
     engine.register_fn("spawn_dynamic", WorldFacet::spawn_dynamic);
     engine.register_fn("spawn_empty", WorldFacet::spawn_empty);
 
-    engine.register_type_with_name::<TransformFacet>("Transform");
+    engine.register_type_with_name::<TransformFacet<'static>>("Transform");
     engine.register_fn("position", TransformFacet::position);
     engine.register_fn("rotation", TransformFacet::rotation);
     engine.register_fn("set_position", TransformFacet::set_position);
     engine.register_fn("set_rotation", TransformFacet::set_rotation);
     engine.register_fn("set_scale", TransformFacet::set_scale);
 
-    engine.register_type_with_name::<PhysicsFacet>("Physics");
+    engine.register_type_with_name::<PhysicsFacet<'static>>("Physics");
     engine.register_fn("velocity", PhysicsFacet::velocity);
     engine.register_fn("set_velocity", PhysicsFacet::set_velocity);
     engine.register_fn("apply_impulse", PhysicsFacet::apply_impulse);
 
-    engine.register_type_with_name::<SpriteFacet>("Sprite");
+    engine.register_type_with_name::<SpriteFacet<'static>>("Sprite");
     engine.register_fn("set_visible", SpriteFacet::set_visible);
     engine.register_fn("set_tint", SpriteFacet::set_tint);
 }
@@ -1029,6 +1048,8 @@ impl TryFrom<Dynamic> for Vec2 {
     type Error = Box<EvalAltResult>;
 
     fn try_from(value: Dynamic) -> Result<Self, Self::Error> {
-        value.cast::<Vec2>().map_err(|v| v.into())
+        value
+            .try_cast::<Vec2>()
+            .ok_or_else(|| "Expected Vec2".into())
     }
 }
