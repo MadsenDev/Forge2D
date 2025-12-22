@@ -1053,15 +1053,26 @@ fn parse_key(name: &str) -> Option<winit::keyboard::KeyCode> {
     use winit::keyboard::KeyCode;
 
     match name {
-        "W" | "w" => Some(KeyCode::KeyW),
-        "A" | "a" => Some(KeyCode::KeyA),
-        "S" | "s" => Some(KeyCode::KeyS),
-        "D" | "d" => Some(KeyCode::KeyD),
-        "Space" | "space" => Some(KeyCode::Space),
-        "Left" | "left" => Some(KeyCode::ArrowLeft),
-        "Right" | "right" => Some(KeyCode::ArrowRight),
-        "Up" | "up" => Some(KeyCode::ArrowUp),
-        "Down" | "down" => Some(KeyCode::ArrowDown),
+        // Character keys
+        "W" | "w" | "KeyW" | "keyW" => Some(KeyCode::KeyW),
+        "A" | "a" | "KeyA" | "keyA" => Some(KeyCode::KeyA),
+        "S" | "s" | "KeyS" | "keyS" => Some(KeyCode::KeyS),
+        "D" | "d" | "KeyD" | "keyD" => Some(KeyCode::KeyD),
+
+        // Common aliases for the space bar
+        "Space" | "space" | "Spacebar" | "spacebar" => Some(KeyCode::Space),
+
+        // Arrow keys often surface under multiple human-friendly labels
+        "Left" | "left" | "ArrowLeft" | "arrowLeft" | "LeftArrow" | "leftArrow" => {
+            Some(KeyCode::ArrowLeft)
+        }
+        "Right" | "right" | "ArrowRight" | "arrowRight" | "RightArrow" | "rightArrow" => {
+            Some(KeyCode::ArrowRight)
+        }
+        "Up" | "up" | "ArrowUp" | "arrowUp" | "UpArrow" | "upArrow" => Some(KeyCode::ArrowUp),
+        "Down" | "down" | "ArrowDown" | "arrowDown" | "DownArrow" | "downArrow" => {
+            Some(KeyCode::ArrowDown)
+        }
         _ => None,
     }
 }

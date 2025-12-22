@@ -1,8 +1,9 @@
 // Simple player controller used by the scripting demo.
 // Horizontal movement uses WASD/arrow keys; Space provides a small hop.
 
-let SPEED = if params.contains_key("speed") { params["speed"] } else { 9.0 };
-let JUMP = if params.contains_key("jump") { params["jump"] } else { 6.0 };
+// Defaults tuned for the Forge2D scripting demo scale.
+let SPEED = if params.contains_key("speed") { params["speed"] } else { 140.0 };
+let JUMP = if params.contains_key("jump") { params["jump"] } else { 40.0 };
 
 fn on_start(self) {
     let sprite = self.sprite();

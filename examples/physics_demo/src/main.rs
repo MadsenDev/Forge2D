@@ -4,7 +4,7 @@ use forge2d::{
     physics::{ColliderShape, PhysicsEvent, PhysicsWorld, RigidBodyType},
     render::{Renderer, Sprite, TextureHandle},
     scene::{create_scene, restore_scene_physics, Scene},
-    Engine, Game,
+    Engine, Game, KeyCode,
 };
 use std::collections::HashSet;
 
@@ -422,7 +422,7 @@ impl Game for PhysicsDemo {
         // Save/Load scene (S to save, L to load)
         {
             let input = ctx.input();
-            if input.is_key_pressed(forge2d::VirtualKeyCode::S) {
+            if input.is_key_pressed(KeyCode::KeyS) {
                 // Only save entities that are in self.entities (exclude ground and sensor)
                 let mut scene = create_scene(&self.physics);
                 // Filter out static entities from saved scene
@@ -445,7 +445,7 @@ impl Game for PhysicsDemo {
                     Err(e) => eprintln!("Failed to save scene: {}", e),
                 }
             }
-            if input.is_key_pressed(forge2d::VirtualKeyCode::L) {
+            if input.is_key_pressed(KeyCode::KeyL) {
                 match Scene::load_from_file(std::path::Path::new("physics_scene.json")) {
                     Ok(scene) => {
                         // ChatGPT's solution: Completely clear physics world and rebuild everything
@@ -882,16 +882,16 @@ impl Game for PhysicsDemo {
         // WASD forces
         let input = ctx.input();
         let force_dir = Vec2::new(
-            if input.is_key_down(forge2d::VirtualKeyCode::D) {
+            if input.is_key_down(KeyCode::KeyD) {
                 1.0
-            } else if input.is_key_down(forge2d::VirtualKeyCode::A) {
+            } else if input.is_key_down(KeyCode::KeyA) {
                 -1.0
             } else {
                 0.0
             },
-            if input.is_key_down(forge2d::VirtualKeyCode::S) {
+            if input.is_key_down(KeyCode::KeyS) {
                 1.0
-            } else if input.is_key_down(forge2d::VirtualKeyCode::W) {
+            } else if input.is_key_down(KeyCode::KeyW) {
                 -1.0
             } else {
                 0.0
