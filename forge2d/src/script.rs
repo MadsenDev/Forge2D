@@ -135,7 +135,7 @@ impl ScriptInstance {
         key: ScriptInstanceKey,
         script_path: String,
         params: &ScriptParams,
-        _module: &ScriptModule,
+        module: &ScriptModule,
     ) -> Self {
         let mut scope = Scope::new();
         scope.push_dynamic("params", params.as_rhai_map().into());
@@ -847,11 +847,12 @@ impl ScriptRuntime {
                     );
                 }
 
-                let module = &self.modules[&attachment.path];
-                if let Some(entry) = self.instances.get_mut(&key) {
-                    if !entry.has_started {
-                        self.run_create_and_start(entry, world, physics, module, input)?;
+                if let Some(mut instance) = self.instances.remove(&key) {
+                    if !instance.has_started {
+                        self.run_create_and_start(&mut instance, world, physics, input)?;
                     }
+
+                    self.instances.insert(key, instance);
                 }
             }
         }
@@ -914,7 +915,6 @@ impl ScriptRuntime {
         instance: &mut ScriptInstance,
         world: &World,
         physics: &PhysicsWorld,
-        module: &ScriptModule,
         input: &InputState,
     ) -> Result<()> {
         let ctx = ScriptSelf::new(
