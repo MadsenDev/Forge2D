@@ -201,7 +201,7 @@ impl ScriptingDemo {
 
         for (key, label) in keys {
             if input.is_key_pressed(key) {
-                println!("[ScriptingDemo] Key pressed: {}", label);
+                //println!("[ScriptingDemo] Key pressed: {}", label);
             }
         }
     }
