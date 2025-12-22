@@ -5,21 +5,21 @@ let SPEED = if params.contains_key("speed") { params["speed"] } else { 9.0 };
 let JUMP = if params.contains_key("jump") { params["jump"] } else { 6.0 };
 
 fn on_start(self) {
-    let mut sprite = self.sprite();
+    let sprite = self.sprite();
     if sprite != () {
         sprite.set_tint([0.35, 0.9, 1.0, 1.0]);
     }
 }
 
 fn on_update(self, _dt) {
-    let mut physics = self.physics();
+    let physics = self.physics();
     if physics == () { return; }
 
-    let mut move_x = 0.0;
+    let move_x = 0.0;
     if self.input.is_key_down("A") || self.input.is_key_down("Left") { move_x -= 1.0; }
     if self.input.is_key_down("D") || self.input.is_key_down("Right") { move_x += 1.0; }
 
-    let mut velocity = physics.velocity();
+    let velocity = physics.velocity();
     velocity.x = move_x * SPEED;
 
     if self.input.is_key_pressed("Space") {
