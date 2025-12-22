@@ -66,10 +66,16 @@ impl ScriptingDemo {
             // Give the scripted controller enough speed and jump strength to feel responsive.
             .insert("speed", 200.0)
             .insert("jump", 75.0);
+
+        // Use an absolute path so the script loads correctly when running from the
+        // example's package directory.
+        let script_path = format!(
+            "{}/scripts/scripting_demo_player.rhai",
+            env!("CARGO_MANIFEST_DIR")
+        );
         self.world.insert(
             entity,
-            ScriptComponent::default()
-                .with_script("examples/scripts/scripting_demo_player.rhai", params),
+            ScriptComponent::default().with_script(script_path, params),
         );
 
         self.physics
