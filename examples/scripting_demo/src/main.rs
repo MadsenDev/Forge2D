@@ -63,8 +63,9 @@ impl ScriptingDemo {
 
         self.world.insert(entity, ScriptTag("player".into()));
         let params = ScriptParams::default()
-            .insert("speed", 8.5)
-            .insert("jump", 7.0);
+            // Give the scripted controller enough speed and jump strength to feel responsive.
+            .insert("speed", 200.0)
+            .insert("jump", 75.0);
         self.world.insert(
             entity,
             ScriptComponent::default()
@@ -74,7 +75,8 @@ impl ScriptingDemo {
         self.physics
             .create_body(entity, RigidBodyType::Dynamic, position, 0.0)?;
         self.physics.lock_rotations(entity, true);
-        self.physics.set_linear_damping(entity, 4.0);
+        // Keep some damping for stability but avoid over-damping horizontal movement.
+        self.physics.set_linear_damping(entity, 0.5);
         self.physics.add_collider_with_material(
             entity,
             ColliderShape::Box { hx: 16.0, hy: 16.0 },
