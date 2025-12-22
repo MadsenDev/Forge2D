@@ -108,8 +108,8 @@ impl Engine {
                             // Note: The actual resize will come through Resized event
                         }
                         WindowEvent::RedrawRequested => {
-                            if let Err(_err) = game.draw(&mut ctx) {
-                                // Error handling: log and exit
+                            if let Err(err) = game.draw(&mut ctx) {
+                                eprintln!("Encountered error during draw: {err:?}");
                                 elwt.exit();
                                 return;
                             }
@@ -126,8 +126,8 @@ impl Engine {
                     ctx.update_time(now - last_frame);
                     last_frame = now;
 
-                    if let Err(_err) = game.update(&mut ctx) {
-                        // Error handling: log and exit
+                    if let Err(err) = game.update(&mut ctx) {
+                        eprintln!("Encountered error during update: {err:?}");
                         elwt.exit();
                         return;
                     }
