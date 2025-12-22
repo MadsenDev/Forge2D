@@ -784,7 +784,7 @@ impl ScriptRuntime {
                     (true, true) => "on_trigger_enter",
                     (true, false) => "on_trigger_exit",
                 };
-                self.call_script_fn(instance, function_name, (ctx, other.to_u32() as i64))?;
+                ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, function_name, (ctx, other.to_u32() as i64))?;
             }
         }
 
@@ -881,13 +881,15 @@ impl ScriptRuntime {
             };
 
             if include_dt {
-                self.call_script_fn(
+                ScriptRuntime::call_script_fn(
+                    &self.engine,
+                    &self.modules,
                     instance,
                     fn_name,
                     (ctx, if stage == ScriptStage::Update { dt } else { fixed_dt }),
                 )?;
             } else {
-                self.call_script_fn(instance, fn_name, (ctx,))?;
+                ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, fn_name, (ctx,))?;
             }
         }
         Ok(())
@@ -911,8 +913,8 @@ impl ScriptRuntime {
             0.0,
         );
 
-        self.call_script_fn(instance, "on_create", (ctx.clone(),))?;
-        self.call_script_fn(instance, "on_start", (ctx,))?;
+        ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, "on_create", (ctx.clone(),))?;
+        ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, "on_start", (ctx,))?;
 
         instance.has_started = true;
         Ok(())
@@ -935,7 +937,7 @@ impl ScriptRuntime {
             0.0,
         );
 
-        self.call_script_fn(instance, "on_destroy", (ctx,))?;
+        ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, "on_destroy", (ctx,))?;
 
         Ok(())
     }
@@ -956,14 +958,14 @@ impl ScriptRuntime {
     }
 
     fn call_script_fn<A: rhai::FuncArgs + Clone>(
-        &self,
+        engine: &Engine,
+        modules: &HashMap<String, ScriptModule>,
         instance: &mut ScriptInstance,
         name: &str,
         args: A,
     ) -> Result<()> {
-        let ast = &self.modules[&instance.script_path].ast;
-        match self
-            .engine
+        let ast = &modules[&instance.script_path].ast;
+        match engine
             .call_fn::<Dynamic>(&mut instance.scope, ast, name, args)
         {
             Ok(_) => Ok(()),
