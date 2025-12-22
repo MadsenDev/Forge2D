@@ -1,5 +1,8 @@
 use anyhow::Result;
+use std::path::Path;
+
 use forge2d::{
+    input::InputState,
     math::{Camera2D, Vec2},
     physics::{ColliderShape, PhysicsWorld, RigidBodyType},
     render::{Renderer, TextureHandle},
@@ -73,6 +76,13 @@ impl ScriptingDemo {
             "{}/scripts/scripting_demo_player.rhai",
             env!("CARGO_MANIFEST_DIR")
         );
+
+        println!(
+            "[ScriptingDemo] Attaching script to player: {} (exists: {})",
+            script_path,
+            Path::new(&script_path).exists()
+        );
+
         self.world.insert(
             entity,
             ScriptComponent::default().with_script(script_path, params),
@@ -179,6 +189,24 @@ impl ScriptingDemo {
     }
 }
 
+impl ScriptingDemo {
+    fn log_key_presses(&self, input: &InputState) {
+        let keys = [
+            (KeyCode::KeyA, "A"),
+            (KeyCode::KeyD, "D"),
+            (KeyCode::ArrowLeft, "Left"),
+            (KeyCode::ArrowRight, "Right"),
+            (KeyCode::Space, "Space"),
+        ];
+
+        for (key, label) in keys {
+            if input.is_key_pressed(key) {
+                println!("[ScriptingDemo] Key pressed: {}", label);
+            }
+        }
+    }
+}
+
 impl Game for ScriptingDemo {
     fn init(&mut self, ctx: &mut EngineContext) -> Result<()> {
         self.create_textures(ctx.renderer())?;
@@ -212,6 +240,8 @@ impl Game for ScriptingDemo {
 
         self.update_sprite_transforms();
         self.update_camera();
+
+        self.log_key_presses(ctx.input());
 
         if ctx.input().is_key_pressed(KeyCode::Escape) {
             ctx.request_exit();
