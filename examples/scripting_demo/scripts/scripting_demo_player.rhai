@@ -2,8 +2,8 @@
 // Horizontal movement uses WASD/arrow keys; Space provides a small hop.
 
 // Defaults tuned for the Forge2D scripting demo scale.
-let SPEED = if params.contains_key("speed") { params["speed"] } else { 200.0 };
-let JUMP = if params.contains_key("jump") { params["jump"] } else { 75.0 };
+let SPEED = if params.contains("speed") { params["speed"] } else { 200.0 };
+let JUMP = if params.contains("jump") { params["jump"] } else { 75.0 };
 
 fn on_start(self) {
     print("[player script] loaded scripting_demo_player.rhai");
