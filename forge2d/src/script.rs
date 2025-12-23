@@ -928,6 +928,11 @@ impl ScriptRuntime {
         physics: &PhysicsWorld,
         input: &InputState,
     ) -> Result<()> {
+        let ast = &self.modules[&instance.script_path].ast;
+        self.engine
+            .eval_ast_with_scope::<Dynamic>(&mut instance.scope, ast)
+            .map_err(|e| anyhow!(e.to_string()))?;
+
         let ctx = ScriptSelf::new(
             instance.key.entity,
             world,
