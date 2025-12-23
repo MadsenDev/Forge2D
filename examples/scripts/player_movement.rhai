@@ -4,8 +4,8 @@
 // - Up arrow spawns a dynamic projectile at the owner's position.
 // - Any trigger contact despawns the other entity.
 
-let SPEED = if params.contains_key("speed") { params["speed"] } else { 6.0 };
-let JUMP_FORCE = if params.contains_key("jump_force") { params["jump_force"] } else { 8.0 };
+let SPEED = if params.contains("speed") { params["speed"] } else { 6.0 };
+let JUMP_FORCE = if params.contains("jump_force") { params["jump_force"] } else { 8.0 };
 
 fn on_start(self) {
     let transform = self.transform();
