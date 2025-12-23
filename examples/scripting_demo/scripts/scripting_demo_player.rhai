@@ -30,12 +30,10 @@ fn on_update(self, _dt) {
     }
 
     let velocity = physics.velocity();
-    velocity.x = move_x * SPEED;
+    physics.set_velocity(vec2(move_x * SPEED, velocity.y));
 
     if self.input.is_key_pressed("Space") {
         print("[player script] jump pressed");
-        velocity.y = -JUMP;
+        physics.apply_impulse(vec2(0.0, -JUMP));
     }
-
-    physics.set_velocity(velocity);
 }
