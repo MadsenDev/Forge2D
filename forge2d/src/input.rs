@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use winit::{
     event::{ElementState, KeyEvent, MouseButton},
-    keyboard::KeyCode,
+    keyboard::{KeyCode, PhysicalKey},
 };
 
 /// Tracks keyboard and mouse state across frames.
@@ -32,7 +32,7 @@ impl InputState {
         }
     }
 
-    /// Clear per-frame pressed/released flags.
+    /// Clear per-frame pressed/released flags (held keys stay down).
     pub fn begin_frame(&mut self) {
         self.keys_pressed.clear();
         self.keys_released.clear();
@@ -42,18 +42,20 @@ impl InputState {
 
     /// Handle a keyboard input event from winit.
     pub fn handle_key(&mut self, event: &KeyEvent) {
-        if let winit::keyboard::PhysicalKey::Code(keycode) = event.physical_key {
-            match event.state {
-                ElementState::Pressed => {
-                    if !self.keys_down.contains(&keycode) {
-                        self.keys_pressed.insert(keycode);
-                    }
-                    self.keys_down.insert(keycode);
+        let PhysicalKey::Code(keycode) = event.physical_key else {
+            return;
+        };
+
+        match event.state {
+            ElementState::Pressed => {
+                if !self.keys_down.contains(&keycode) {
+                    self.keys_pressed.insert(keycode);
                 }
-                ElementState::Released => {
-                    self.keys_down.remove(&keycode);
-                    self.keys_released.insert(keycode);
-                }
+                self.keys_down.insert(keycode);
+            }
+            ElementState::Released => {
+                self.keys_down.remove(&keycode);
+                self.keys_released.insert(keycode);
             }
         }
     }
