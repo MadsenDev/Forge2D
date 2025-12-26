@@ -4,7 +4,7 @@
 //! like sprites, physics bodies, audio sources, etc.
 
 use crate::math::{Transform2D, Vec2};
-use crate::render::{Sprite, TextureHandle};
+use crate::render::{Sprite, TextureHandle, Tilemap};
 use crate::physics::{ColliderShape, RigidBodyType};
 
 /// Transform component - position, rotation, and scale.
@@ -255,6 +255,18 @@ impl MovingPlatform {
             current_t: 0.0,
             direction: 1.0,
         }
+    }
+}
+
+/// Tilemap component - renders a tile-based map.
+#[derive(Clone, Debug)]
+pub struct TilemapComponent {
+    pub tilemap: Tilemap,
+}
+
+impl TilemapComponent {
+    pub fn new(tilemap: Tilemap) -> Self {
+        Self { tilemap }
     }
 }
 

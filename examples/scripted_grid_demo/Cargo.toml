@@ -1,0 +1,14 @@
+[package]
+name = "scripted_grid_demo"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "scripted_grid_demo"
+path = "src/main.rs"
+
+[dependencies]
+forge2d = { path = "../../forge2d" }
+anyhow = { workspace = true }
+mlua = { workspace = true }
+

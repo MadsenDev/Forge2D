@@ -95,6 +95,16 @@ impl<'window> Renderer<'window> {
         )
     }
 
+    /// Draw a tilemap efficiently (batched rendering).
+    pub fn draw_tilemap(
+        &mut self,
+        frame: &mut Frame,
+        tilemap: &crate::render::Tilemap,
+        camera: &Camera2D,
+    ) -> Result<()> {
+        self.backend.draw_tilemap(frame, tilemap, camera)
+    }
+
     pub fn end_frame(&mut self, frame: Frame) -> Result<()> {
         self.backend.end_frame(frame)
     }
@@ -785,6 +795,73 @@ impl<'window> WgpuBackend<'window> {
 
         // Advance offset for next sprite
         self.uniform_write_offset = aligned_offset + self.sprite_pipeline.uniform_alignment;
+
+        Ok(())
+    }
+
+    /// Draw a tilemap efficiently (batched rendering with viewport culling).
+    fn draw_tilemap(
+        &mut self,
+        frame: &mut Frame,
+        tilemap: &crate::render::Tilemap,
+        camera: &Camera2D,
+    ) -> Result<()> {
+        use crate::math::Transform2D;
+        let (map_width, map_height) = tilemap.map_size;
+        
+        // Calculate visible tile bounds using camera viewport
+        let (screen_w, screen_h) = (self.surface_config.width as f32, self.surface_config.height as f32);
+        let half_screen = Vec2::new(screen_w * 0.5, screen_h * 0.5);
+        let camera_scale = 1.0 / camera.zoom;
+        let visible_size = Vec2::new(half_screen.x * camera_scale, half_screen.y * camera_scale);
+        
+        // World-space bounds of visible area
+        let min_world = camera.position - visible_size;
+        let max_world = camera.position + visible_size;
+        
+        // Convert to tile coordinates (with padding for safety)
+        let (min_tile_x, min_tile_y) = tilemap.world_to_tile(min_world);
+        let (max_tile_x, max_tile_y) = tilemap.world_to_tile(max_world);
+        
+        // Clamp to map bounds
+        let start_x = (min_tile_x - 1).max(0) as u32;
+        let end_x = ((max_tile_x + 1).min(map_width as i32 - 1).max(0)) as u32;
+        let start_y = (min_tile_y - 1).max(0) as u32;
+        let end_y = ((max_tile_y + 1).min(map_height as i32 - 1).max(0)) as u32;
+        
+        // Only iterate over visible tiles
+        for y in start_y..=end_y.min(map_height - 1) {
+            for x in start_x..=end_x.min(map_width - 1) {
+                let tile = tilemap.tiles[(y * map_width + x) as usize];
+                if tile.is_empty() {
+                    continue;
+                }
+
+                // Get UV rect for this tile
+                if let Some(uv_rect) = tilemap.tile_uv_rect(tile.id) {
+                    // Calculate world position (center of tile)
+                    let world_pos = tilemap.tile_to_world(x, y);
+                    
+                    // Create transform for this tile
+                    let transform = Transform2D {
+                        position: world_pos,
+                        rotation: 0.0,
+                        scale: tilemap.tile_size,
+                    };
+
+                    // Draw the tile using texture region
+                    self.draw_texture_region(
+                        frame,
+                        tilemap.tileset,
+                        Some(uv_rect),
+                        &transform,
+                        tilemap.tint,
+                        true, // Tiles are occluders
+                        camera,
+                    )?;
+                }
+            }
+        }
 
         Ok(())
     }

@@ -8,6 +8,7 @@ use anyhow::{anyhow, Result};
 use mlua::{Lua, UserData, UserDataMethods};
 
 use crate::entities::{SpriteComponent, Transform};
+use crate::render::AnimatedSprite;
 use crate::input::InputState;
 use crate::math::Vec2;
 use crate::physics::{PhysicsEvent, PhysicsWorld, RigidBodyType};
@@ -182,6 +183,35 @@ pub enum ScriptCommand {
         entity: EntityId,
         velocity: Vec2,
     },
+    UpdateAnimation {
+        entity: EntityId,
+        dt: f32,
+    },
+    SetAnimationPlaying {
+        entity: EntityId,
+        playing: bool,
+    },
+    ResetAnimation {
+        entity: EntityId,
+    },
+    SetAnimationSpeed {
+        entity: EntityId,
+        speed: f32,
+    },
+    SetTilemapTile {
+        entity: EntityId,
+        x: u32,
+        y: u32,
+        tile_id: u32,
+    },
+    FillTilemapRect {
+        entity: EntityId,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        tile_id: u32,
+    },
     Despawn {
         entity: EntityId,
     },
@@ -234,6 +264,30 @@ impl ScriptCommandBuffer {
     pub fn set_velocity(&mut self, entity: EntityId, velocity: Vec2) {
         self.commands
             .push(ScriptCommand::SetVelocity { entity, velocity });
+    }
+
+    pub fn update_animation(&mut self, entity: EntityId, dt: f32) {
+        self.commands.push(ScriptCommand::UpdateAnimation { entity, dt });
+    }
+
+    pub fn set_animation_playing(&mut self, entity: EntityId, playing: bool) {
+        self.commands.push(ScriptCommand::SetAnimationPlaying { entity, playing });
+    }
+
+    pub fn reset_animation(&mut self, entity: EntityId) {
+        self.commands.push(ScriptCommand::ResetAnimation { entity });
+    }
+
+    pub fn set_animation_speed(&mut self, entity: EntityId, speed: f32) {
+        self.commands.push(ScriptCommand::SetAnimationSpeed { entity, speed });
+    }
+
+    pub fn set_tilemap_tile(&mut self, entity: EntityId, x: u32, y: u32, tile_id: u32) {
+        self.commands.push(ScriptCommand::SetTilemapTile { entity, x, y, tile_id });
+    }
+
+    pub fn fill_tilemap_rect(&mut self, entity: EntityId, x: u32, y: u32, width: u32, height: u32, tile_id: u32) {
+        self.commands.push(ScriptCommand::FillTilemapRect { entity, x, y, width, height, tile_id });
     }
 
     pub fn spawn(&mut self, request: SpawnRequest) {
@@ -306,6 +360,36 @@ impl ScriptCommandBuffer {
                 ScriptCommand::SetVelocity { entity, velocity } => {
                     physics.set_linear_velocity(entity, velocity);
                     physics.wake_up(entity, true);
+                }
+                ScriptCommand::UpdateAnimation { entity, dt } => {
+                    if let Some(anim) = world.get_mut::<AnimatedSprite>(entity) {
+                        anim.update(dt);
+                    }
+                }
+                ScriptCommand::SetAnimationPlaying { entity, playing } => {
+                    if let Some(anim) = world.get_mut::<AnimatedSprite>(entity) {
+                        anim.playing = playing;
+                    }
+                }
+                ScriptCommand::ResetAnimation { entity } => {
+                    if let Some(anim) = world.get_mut::<AnimatedSprite>(entity) {
+                        anim.reset();
+                    }
+                }
+                ScriptCommand::SetAnimationSpeed { entity, speed } => {
+                    if let Some(anim) = world.get_mut::<AnimatedSprite>(entity) {
+                        anim.speed = speed;
+                    }
+                }
+                ScriptCommand::SetTilemapTile { entity, x, y, tile_id } => {
+                    if let Some(tilemap_comp) = world.get_mut::<crate::entities::TilemapComponent>(entity) {
+                        tilemap_comp.tilemap.set_tile(x, y, tile_id);
+                    }
+                }
+                ScriptCommand::FillTilemapRect { entity, x, y, width, height, tile_id } => {
+                    if let Some(tilemap_comp) = world.get_mut::<crate::entities::TilemapComponent>(entity) {
+                        tilemap_comp.tilemap.fill_rect(x, y, width, height, tile_id);
+                    }
                 }
                 ScriptCommand::Despawn { entity } => {
                     physics.remove_body(entity);
@@ -381,6 +465,30 @@ impl UserData for ScriptSelf {
             if world.get::<SpriteComponent>(this.entity).is_some() {
                 Ok(Some(SpriteFacet {
                     entity: this.entity,
+                    commands: Arc::clone(&this.commands),
+                }))
+            } else {
+                Ok(None)
+            }
+        });
+        methods.add_method("animation", |_, this, ()| {
+            let world = unsafe { &*this.world };
+            if world.get::<AnimatedSprite>(this.entity).is_some() {
+                Ok(Some(AnimationFacet {
+                    entity: this.entity,
+                    world: this.world,
+                    commands: Arc::clone(&this.commands),
+                }))
+            } else {
+                Ok(None)
+            }
+        });
+        methods.add_method("tilemap", |_, this, ()| {
+            let world = unsafe { &*this.world };
+            if world.get::<crate::entities::TilemapComponent>(this.entity).is_some() {
+                Ok(Some(TilemapFacet {
+                    entity: this.entity,
+                    world: this.world,
                     commands: Arc::clone(&this.commands),
                 }))
             } else {
@@ -469,6 +577,26 @@ impl UserData for InputFacet {
         methods.add_method("mouse_pos_screen", |_, this, ()| {
             let (x, y) = unsafe { &*this.input }.mouse_screen_pixels();
             Ok(Vec2::new(x, y))
+        });
+        methods.add_method("is_mouse_pressed", |_, this, button_name: String| {
+            use winit::event::MouseButton;
+            let button = match button_name.as_str() {
+                "Left" | "left" => MouseButton::Left,
+                "Right" | "right" => MouseButton::Right,
+                "Middle" | "middle" => MouseButton::Middle,
+                _ => return Ok(false),
+            };
+            Ok(unsafe { &*this.input }.is_mouse_pressed(button))
+        });
+        methods.add_method("is_mouse_down", |_, this, button_name: String| {
+            use winit::event::MouseButton;
+            let button = match button_name.as_str() {
+                "Left" | "left" => MouseButton::Left,
+                "Right" | "right" => MouseButton::Right,
+                "Middle" | "middle" => MouseButton::Middle,
+                _ => return Ok(false),
+            };
+            Ok(unsafe { &*this.input }.is_mouse_down(button))
         });
     }
 }
@@ -622,9 +750,109 @@ impl UserData for SpriteFacet {
     }
 }
 
+#[derive(Clone)]
+pub struct AnimationFacet {
+    entity: EntityId,
+    world: *const World,
+    commands: Arc<Mutex<ScriptCommandBuffer>>,
+}
+
+impl UserData for AnimationFacet {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("update", |_, this, dt: f64| {
+            if let Ok(mut commands) = this.commands.lock() {
+                commands.update_animation(this.entity, dt as f32);
+            }
+            Ok(())
+        });
+        methods.add_method("play", |_, this, ()| {
+            if let Ok(mut commands) = this.commands.lock() {
+                commands.set_animation_playing(this.entity, true);
+            }
+            Ok(())
+        });
+        methods.add_method("pause", |_, this, ()| {
+            if let Ok(mut commands) = this.commands.lock() {
+                commands.set_animation_playing(this.entity, false);
+            }
+            Ok(())
+        });
+        methods.add_method("reset", |_, this, ()| {
+            if let Ok(mut commands) = this.commands.lock() {
+                commands.reset_animation(this.entity);
+            }
+            Ok(())
+        });
+        methods.add_method("set_speed", |_, this, speed: f64| {
+            if let Ok(mut commands) = this.commands.lock() {
+                commands.set_animation_speed(this.entity, speed as f32);
+            }
+            Ok(())
+        });
+        methods.add_method("current_frame_index", |_, this, ()| {
+            let world = unsafe { &*this.world };
+            Ok(world.get::<AnimatedSprite>(this.entity)
+                .map(|a| a.current_frame_index as i64)
+                .unwrap_or(0))
+        });
+    }
+}
+
+#[derive(Clone)]
+pub struct TilemapFacet {
+    entity: EntityId,
+    world: *const World,
+    commands: Arc<Mutex<ScriptCommandBuffer>>,
+}
+
+impl UserData for TilemapFacet {
+    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("set_tile", |_, this, (x, y, tile_id): (u32, u32, u32)| {
+            if let Ok(mut commands) = this.commands.lock() {
+                commands.set_tilemap_tile(this.entity, x, y, tile_id);
+            }
+            Ok(())
+        });
+        methods.add_method("get_tile", |_, this, (x, y): (u32, u32)| {
+            let world = unsafe { &*this.world };
+            Ok(world.get::<crate::entities::TilemapComponent>(this.entity)
+                .and_then(|t| t.tilemap.get_tile(x, y))
+                .map(|t| t.id as i64)
+                .unwrap_or(0))
+        });
+        methods.add_method("fill_rect", |_, this, (x, y, w, h, tile_id): (u32, u32, u32, u32, u32)| {
+            if let Ok(mut commands) = this.commands.lock() {
+                commands.fill_tilemap_rect(this.entity, x, y, w, h, tile_id);
+            }
+            Ok(())
+        });
+        methods.add_method("world_to_tile", |lua, this, world_pos: Vec2| {
+            let world = unsafe { &*this.world };
+            if let Some(tilemap_comp) = world.get::<crate::entities::TilemapComponent>(this.entity) {
+                let (tx, ty) = tilemap_comp.tilemap.world_to_tile(world_pos);
+                let table = lua.create_table()?;
+                table.set("x", tx)?;
+                table.set("y", ty)?;
+                Ok(mlua::Value::Table(table))
+            } else {
+                let table = lua.create_table()?;
+                table.set("x", 0)?;
+                table.set("y", 0)?;
+                Ok(mlua::Value::Table(table))
+            }
+        });
+        methods.add_method("tile_to_world", |_, this, (x, y): (u32, u32)| {
+            let world = unsafe { &*this.world };
+            Ok(world.get::<crate::entities::TilemapComponent>(this.entity)
+                .map(|t| t.tilemap.tile_to_world(x, y))
+                .unwrap_or(Vec2::ZERO))
+        });
+    }
+}
+
 /// Central runtime that owns the embedded scripting engine and per-entity instances.
 pub struct ScriptRuntime {
-    lua: Lua,
+    pub(crate) lua: Lua,
     modules: HashMap<String, ScriptModule>,
     instances: BTreeMap<ScriptInstanceKey, ScriptInstance>,
     command_buffer: Arc<Mutex<ScriptCommandBuffer>>,
@@ -663,6 +891,18 @@ impl ScriptRuntime {
         })?;
         lua.globals().set("vec2", vec2_func)?;
 
+        // Register GridCoord type
+        lua.register_userdata_type::<crate::grid::GridCoord>(|reg| {
+            reg.add_method("x", |_, this, ()| Ok(this.x));
+            reg.add_method("y", |_, this, ()| Ok(this.y));
+        })?;
+        
+        // Register GridNode type
+        lua.register_userdata_type::<crate::pathfinding::GridNode>(|reg| {
+            reg.add_method("x", |_, this, ()| Ok(this.x));
+            reg.add_method("y", |_, this, ()| Ok(this.y));
+        })?;
+
         // UserData types are automatically registered when first used
         // No explicit registration needed - the UserData impl provides the methods
 
@@ -679,6 +919,25 @@ impl ScriptRuntime {
     pub fn with_hot_reload(mut self, enabled: bool) -> Self {
         self.hot_reload = enabled;
         self
+    }
+    
+    /// Register a custom Lua function in the global namespace.
+    /// This allows demos/examples to expose custom APIs to scripts.
+    pub fn register_function<F, A, R>(&mut self, name: &str, func: F) -> Result<()>
+    where
+        F: 'static + Send + for<'lua> Fn(&'lua Lua, A) -> mlua::Result<R>,
+        A: for<'lua> mlua::FromLuaMulti<'lua>,
+        R: for<'lua> mlua::IntoLuaMulti<'lua>,
+    {
+        let func = self.lua.create_function(func)?;
+        self.lua.globals().set(name, func)?;
+        Ok(())
+    }
+    
+    /// Get mutable access to the Lua state for advanced use cases.
+    /// This allows registering custom functions and types directly.
+    pub fn lua_mut(&mut self) -> &mut Lua {
+        &mut self.lua
     }
 
     /// Drive `on_update` for all scripts.
