@@ -14,7 +14,7 @@ fn on_start(self) {
     }
 }
 
-fn on_update(self, _dt) {
+fn on_fixed_update(self, _fixed_dt) {
     let physics = self.physics();
     if physics == () { return; }
 
@@ -22,18 +22,14 @@ fn on_update(self, _dt) {
     if self.input.is_key_down("A") || self.input.is_key_down("Left") { move_x -= 1.0; }
     if self.input.is_key_down("D") || self.input.is_key_down("Right") { move_x += 1.0; }
 
-    if self.input.is_key_pressed("A") || self.input.is_key_pressed("Left") {
-        print("[player script] left pressed");
-    }
-    if self.input.is_key_pressed("D") || self.input.is_key_pressed("Right") {
-        print("[player script] right pressed");
-    }
-
-    let velocity = physics.velocity();
-    physics.set_velocity(vec2(move_x * SPEED, velocity.y));
+    // Test: try calling vec2() in a simpler way
+    // First test if vec2 works at all
+    let test = vec2(0.0, 0.0);
+    
+    // Set velocity - using the exact pattern from the working example
+    physics.set_velocity(vec2(move_x * SPEED, -1000.0));
 
     if self.input.is_key_pressed("Space") {
-        print("[player script] jump pressed");
         physics.apply_impulse(vec2(0.0, -JUMP));
     }
 }

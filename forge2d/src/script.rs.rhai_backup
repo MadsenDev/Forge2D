@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use anyhow::{anyhow, Result};
-use mlua::{Lua, UserData, UserDataMethods};
+use rhai::{Dynamic, Engine, EvalAltResult, Map, Scope, FLOAT};
 
 use crate::entities::{SpriteComponent, Transform};
 use crate::input::InputState;
@@ -13,33 +13,7 @@ use crate::math::Vec2;
 use crate::physics::{PhysicsEvent, PhysicsWorld, RigidBodyType};
 use crate::world::{EntityId, World};
 
-// Implement Lua conversion for Vec2
-impl<'lua> mlua::FromLua<'lua> for Vec2 {
-    fn from_lua(lua_value: mlua::Value<'lua>, _lua: &'lua mlua::Lua) -> mlua::Result<Self> {
-        match lua_value {
-            mlua::Value::Table(t) => {
-                // Try named fields first (x, y), then fall back to indexed (1, 2)
-                let x: f64 = t.get("x").or_else(|_| t.get(1))?;
-                let y: f64 = t.get("y").or_else(|_| t.get(2))?;
-                Ok(Vec2::new(x as f32, y as f32))
-            }
-            _ => Err(mlua::Error::FromLuaConversionError {
-                from: lua_value.type_name(),
-                to: "Vec2",
-                message: Some("Expected table with x and y fields".to_string()),
-            }),
-        }
-    }
-}
-
-impl<'lua> mlua::IntoLua<'lua> for Vec2 {
-    fn into_lua(self, lua: &'lua mlua::Lua) -> mlua::Result<mlua::Value<'lua>> {
-        let table = lua.create_table()?;
-        table.set("x", self.x)?;
-        table.set("y", self.y)?;
-        Ok(mlua::Value::Table(table))
-    }
-}
+type RhaiResult<T> = Result<T, Box<EvalAltResult>>;
 
 /// Simple configuration value that can be passed from Rust into a script.
 #[derive(Clone, Debug)]
@@ -80,6 +54,17 @@ impl From<Vec2> for ScriptValue {
     }
 }
 
+impl ScriptValue {
+    fn to_dynamic(&self) -> Dynamic {
+        match self {
+            ScriptValue::Number(v) => Dynamic::from_float(*v as FLOAT),
+            ScriptValue::Bool(v) => Dynamic::from_bool(*v),
+            ScriptValue::Text(v) => Dynamic::from(v.clone()),
+            ScriptValue::Vec2(v) => Dynamic::from(*v),
+        }
+    }
+}
+
 /// Arbitrary parameters that can be consumed by a script on startup.
 #[derive(Clone, Debug, Default)]
 pub struct ScriptParams {
@@ -91,6 +76,14 @@ impl ScriptParams {
     pub fn insert(mut self, key: impl Into<String>, value: impl Into<ScriptValue>) -> Self {
         self.values.insert(key.into(), value.into());
         self
+    }
+
+    fn as_rhai_map(&self) -> Map {
+        let mut map = Map::new();
+        for (k, v) in &self.values {
+            map.insert(k.clone().into(), v.to_dynamic());
+        }
+        map
     }
 }
 
@@ -119,7 +112,7 @@ pub struct ScriptAttachment {
 }
 
 struct ScriptModule {
-    source: String,
+    ast: rhai::AST,
     modified: Option<SystemTime>,
 }
 
@@ -132,6 +125,7 @@ struct ScriptInstanceKey {
 struct ScriptInstance {
     key: ScriptInstanceKey,
     script_path: String,
+    scope: Scope<'static>,
     has_started: bool,
     last_loaded: Option<SystemTime>,
 }
@@ -143,9 +137,13 @@ impl ScriptInstance {
         params: &ScriptParams,
         module: &ScriptModule,
     ) -> Self {
+        let mut scope = Scope::new();
+        scope.push_dynamic("params", params.as_rhai_map().into());
+
         Self {
             key,
             script_path,
+            scope,
             has_started: false,
             last_loaded: module.modified,
         }
@@ -155,6 +153,7 @@ impl ScriptInstance {
 #[derive(Default)]
 pub struct ScriptCommandBuffer {
     commands: Vec<ScriptCommand>,
+    // Spawn uses a predictable insertion order
     pending_spawns: Vec<SpawnRequest>,
 }
 
@@ -304,8 +303,10 @@ impl ScriptCommandBuffer {
                     physics.apply_impulse(entity, impulse);
                 }
                 ScriptCommand::SetVelocity { entity, velocity } => {
+                    eprintln!("[Script] Applying SetVelocity command: entity={}, velocity=({}, {})", entity.to_u32(), velocity.x, velocity.y);
                     physics.set_linear_velocity(entity, velocity);
                     physics.wake_up(entity, true);
+                    eprintln!("[Script] SetVelocity command applied");
                 }
                 ScriptCommand::Despawn { entity } => {
                     physics.remove_body(entity);
@@ -320,7 +321,19 @@ impl ScriptCommandBuffer {
 #[derive(Clone, Debug)]
 pub struct ScriptTag(pub String);
 
-// Lua userdata types
+fn missing_component<T: Default>(name: &str) -> RhaiResult<T> {
+    #[cfg(debug_assertions)]
+    {
+        Err(format!("{name} component missing on entity").into())
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        Ok(T::default())
+    }
+}
+
+/// Self handle exposed to Rhai scripts. Provides access to facets and engine views.
 #[derive(Clone)]
 pub struct ScriptSelf {
     entity: EntityId,
@@ -330,83 +343,6 @@ pub struct ScriptSelf {
     commands: Arc<Mutex<ScriptCommandBuffer>>,
     dt: f32,
     fixed_dt: f32,
-}
-
-impl UserData for ScriptSelf {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("entity", |_, this, ()| Ok(this.entity.to_u32() as i64));
-        methods.add_method("time", |_, this, ()| {
-            Ok(TimeFacet {
-                dt: this.dt,
-                fixed_dt: this.fixed_dt,
-            })
-        });
-        methods.add_method("input", |_, this, ()| {
-            Ok(InputFacet {
-                input: this.input,
-            })
-        });
-        methods.add_method("world", |_, this, ()| {
-            Ok(WorldFacet {
-                world: this.world,
-                commands: Arc::clone(&this.commands),
-            })
-        });
-        methods.add_method("transform", |_, this, ()| {
-            let world = unsafe { &*this.world };
-            if world.get::<Transform>(this.entity).is_some() {
-                Ok(Some(TransformFacet {
-                    entity: this.entity,
-                    world: this.world,
-                    commands: Arc::clone(&this.commands),
-                }))
-            } else {
-                Ok(None)
-            }
-        });
-        methods.add_method("physics", |_, this, ()| {
-            let physics = unsafe { &*this.physics };
-            if physics.has_body(this.entity) {
-                Ok(Some(PhysicsFacet {
-                    entity: this.entity,
-                    physics: this.physics,
-                    commands: Arc::clone(&this.commands),
-                }))
-            } else {
-                Ok(None)
-            }
-        });
-        methods.add_method("sprite", |_, this, ()| {
-            let world = unsafe { &*this.world };
-            if world.get::<SpriteComponent>(this.entity).is_some() {
-                Ok(Some(SpriteFacet {
-                    entity: this.entity,
-                    commands: Arc::clone(&this.commands),
-                }))
-            } else {
-                Ok(None)
-            }
-        });
-        methods.add_method("position", |_, this, ()| {
-            let world = unsafe { &*this.world };
-            match world.get::<Transform>(this.entity) {
-                Some(t) => Ok(t.position),
-                None => Ok(Vec2::ZERO),
-            }
-        });
-        methods.add_method("set_position", |_, this, pos: Vec2| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.set_transform(this.entity, Some(pos), None, None);
-            }
-            Ok(())
-        });
-        methods.add_method("apply_impulse", |_, this, impulse: Vec2| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.apply_impulse(this.entity, impulse);
-            }
-            Ok(())
-        });
-    }
 }
 
 impl ScriptSelf {
@@ -429,6 +365,94 @@ impl ScriptSelf {
             fixed_dt,
         }
     }
+
+    /// Owning entity id.
+    pub fn entity(&mut self) -> i64 {
+        self.entity.to_u32() as i64
+    }
+
+    pub fn time(&mut self) -> TimeFacet {
+        TimeFacet {
+            dt: self.dt,
+            fixed_dt: self.fixed_dt,
+        }
+    }
+
+    pub fn input(&mut self) -> InputFacet {
+        InputFacet {
+            input: self.input,
+        }
+    }
+
+    pub fn world(&mut self) -> WorldFacet {
+        WorldFacet {
+            world: self.world,
+            commands: Arc::clone(&self.commands),
+        }
+    }
+
+    fn transform_facet(&mut self) -> Option<TransformFacet> {
+        unsafe { &*self.world }
+            .get::<Transform>(self.entity)
+            .map(|_| TransformFacet {
+                entity: self.entity,
+                world: self.world,
+                commands: Arc::clone(&self.commands),
+            })
+    }
+
+    fn physics_facet(&mut self) -> Option<PhysicsFacet> {
+        unsafe { &*self.physics }
+            .has_body(self.entity)
+            .then(|| PhysicsFacet {
+                entity: self.entity,
+                physics: self.physics,
+                commands: Arc::clone(&self.commands),
+            })
+    }
+
+    fn sprite_facet(&mut self) -> Option<SpriteFacet> {
+        unsafe { &*self.world }
+            .get::<SpriteComponent>(self.entity)
+            .map(|_| SpriteFacet {
+                entity: self.entity,
+                commands: Arc::clone(&self.commands),
+            })
+    }
+
+    pub fn transform(&mut self) -> Option<TransformFacet> {
+        self.transform_facet()
+    }
+
+    pub fn physics(&mut self) -> Option<PhysicsFacet> {
+        self.physics_facet()
+    }
+
+    pub fn sprite(&mut self) -> Option<SpriteFacet> {
+        self.sprite_facet()
+    }
+
+    // Optional convenience aliases
+    pub fn position(&mut self) -> RhaiResult<Vec2> {
+        match self.transform_facet() {
+            Some(mut t) => t.position(),
+            None => missing_component("Transform"),
+        }
+    }
+
+    pub fn set_position(&mut self, pos: Vec2) -> RhaiResult<()> {
+        match self.transform_facet() {
+            Some(mut t) => t.set_position(pos),
+            None => missing_component("Transform"),
+        }
+    }
+
+    pub fn apply_impulse(&mut self, impulse: Vec2) -> RhaiResult<()> {
+        match self.physics_facet() {
+            Some(mut p) => p.apply_impulse(impulse),
+            None => missing_component("Physics"),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -437,10 +461,13 @@ pub struct TimeFacet {
     fixed_dt: f32,
 }
 
-impl UserData for TimeFacet {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("delta", |_, this, ()| Ok(this.dt));
-        methods.add_method("fixed_delta", |_, this, ()| Ok(this.fixed_dt));
+impl TimeFacet {
+    pub fn delta(&mut self) -> f32 {
+        self.dt
+    }
+
+    pub fn fixed_delta(&mut self) -> f32 {
+        self.fixed_dt
     }
 }
 
@@ -449,27 +476,28 @@ pub struct InputFacet {
     input: *const InputState,
 }
 
-impl UserData for InputFacet {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("is_key_down", |_, this, name: String| {
-            Ok(parse_key(&name)
-                .map(|k| unsafe { &*this.input }.is_key_down(k))
-                .unwrap_or(false))
-        });
-        methods.add_method("is_key_pressed", |_, this, name: String| {
-            Ok(parse_key(&name)
-                .map(|k| unsafe { &*this.input }.is_key_pressed(k))
-                .unwrap_or(false))
-        });
-        methods.add_method("is_key_released", |_, this, name: String| {
-            Ok(parse_key(&name)
-                .map(|k| unsafe { &*this.input }.is_key_released(k))
-                .unwrap_or(false))
-        });
-        methods.add_method("mouse_pos_screen", |_, this, ()| {
-            let (x, y) = unsafe { &*this.input }.mouse_screen_pixels();
-            Ok(Vec2::new(x, y))
-        });
+impl InputFacet {
+    pub fn is_key_down(&mut self, name: &str) -> bool {
+        parse_key(name)
+            .map(|k| unsafe { &*self.input }.is_key_down(k))
+            .unwrap_or(false)
+    }
+
+    pub fn is_key_pressed(&mut self, name: &str) -> bool {
+        parse_key(name)
+            .map(|k| unsafe { &*self.input }.is_key_pressed(k))
+            .unwrap_or(false)
+    }
+
+    pub fn is_key_released(&mut self, name: &str) -> bool {
+        parse_key(name)
+            .map(|k| unsafe { &*self.input }.is_key_released(k))
+            .unwrap_or(false)
+    }
+
+    pub fn mouse_pos_screen(&mut self) -> Vec2 {
+        let (x, y) = unsafe { &*self.input }.mouse_screen_pixels();
+        Vec2::new(x, y)
     }
 }
 
@@ -479,49 +507,58 @@ pub struct WorldFacet {
     commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
-impl UserData for WorldFacet {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("find_by_tag", |_, this, tag: String| {
-            for (entity, t) in unsafe { &*this.world }.query::<ScriptTag>() {
-                if t.0 == tag {
-                    return Ok(Some(entity.to_u32() as i64));
-                }
+impl WorldFacet {
+    pub fn find_by_tag(&mut self, tag: &str) -> Option<i64> {
+        for (entity, t) in unsafe { &*self.world }.query::<ScriptTag>() {
+            if t.0 == tag {
+                return Some(entity.to_u32() as i64);
             }
-            Ok(None)
-        });
-        methods.add_method("despawn", |_, this, entity_raw: i64| {
-            if entity_raw < 0 {
-                return Err(mlua::Error::RuntimeError("Entity id must be non-negative".to_string()));
+        }
+        None
+    }
+
+    pub fn despawn(&mut self, entity_raw: i64) -> RhaiResult<()> {
+        if entity_raw < 0 {
+            return Err("Entity id must be non-negative".into());
+        }
+
+        let entity = EntityId(entity_raw as u32);
+        if !unsafe { &*self.world }.is_alive(entity) {
+            #[cfg(debug_assertions)]
+            {
+                return Err(format!("Entity {entity_raw} is not alive").into());
             }
-            let entity = EntityId(entity_raw as u32);
-            if !unsafe { &*this.world }.is_alive(entity) {
+
+            #[cfg(not(debug_assertions))]
+            {
                 return Ok(());
             }
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.despawn(entity);
-            }
-            Ok(())
+        }
+
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.despawn(entity);
+        }
+        Ok(())
+    }
+
+    pub fn spawn_dynamic(&mut self, position: Vec2, velocity: Vec2) {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.spawn(SpawnRequest {
+            body: SpawnBody::Dynamic { position },
+            initial_velocity: Some(velocity),
+            tag: None,
         });
-        methods.add_method("spawn_dynamic", |_, this, (position, velocity): (Vec2, Vec2)| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.spawn(SpawnRequest {
-                    body: SpawnBody::Dynamic { position },
-                    initial_velocity: Some(velocity),
-                    tag: None,
-                });
-            }
-            Ok(())
+        }
+    }
+
+    pub fn spawn_empty(&mut self, position: Option<Vec2>, tag: Option<String>) {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.spawn(SpawnRequest {
+            body: SpawnBody::Empty { position },
+            initial_velocity: None,
+            tag,
         });
-        methods.add_method("spawn_empty", |_, this, (position, tag): (Option<Vec2>, Option<String>)| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.spawn(SpawnRequest {
-                    body: SpawnBody::Empty { position },
-                    initial_velocity: None,
-                    tag,
-                });
-            }
-            Ok(())
-        });
+        }
     }
 }
 
@@ -532,38 +569,40 @@ pub struct TransformFacet {
     commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
-impl UserData for TransformFacet {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("position", |_, this, ()| {
-            match unsafe { &*this.world }.get::<Transform>(this.entity) {
-                Some(t) => Ok(t.position),
-                None => Ok(Vec2::ZERO),
-            }
-        });
-        methods.add_method("rotation", |_, this, ()| {
-            match unsafe { &*this.world }.get::<Transform>(this.entity) {
-                Some(t) => Ok(t.rotation),
-                None => Ok(0.0),
-            }
-        });
-        methods.add_method("set_position", |_, this, pos: Vec2| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.set_transform(this.entity, Some(pos), None, None);
-            }
-            Ok(())
-        });
-        methods.add_method("set_rotation", |_, this, rot: f64| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.set_transform(this.entity, None, Some(rot as f32), None);
-            }
-            Ok(())
-        });
-        methods.add_method("set_scale", |_, this, scale: Vec2| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.set_transform(this.entity, None, None, Some(scale));
-            }
-            Ok(())
-        });
+impl TransformFacet {
+    pub fn position(&mut self) -> RhaiResult<Vec2> {
+        match unsafe { &*self.world }.get::<Transform>(self.entity) {
+            Some(t) => Ok(t.position),
+            None => missing_component("Transform"),
+        }
+    }
+
+    pub fn rotation(&mut self) -> RhaiResult<f32> {
+        match unsafe { &*self.world }.get::<Transform>(self.entity) {
+            Some(t) => Ok(t.rotation),
+            None => missing_component("Transform"),
+        }
+    }
+
+    pub fn set_position(&mut self, pos: Vec2) -> RhaiResult<()> {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_transform(self.entity, Some(pos), None, None);
+        }
+        Ok(())
+    }
+
+    pub fn set_rotation(&mut self, rot: f32) -> RhaiResult<()> {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_transform(self.entity, None, Some(rot), None);
+        }
+        Ok(())
+    }
+
+    pub fn set_scale(&mut self, scale: Vec2) -> RhaiResult<()> {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_transform(self.entity, None, None, Some(scale));
+        }
+        Ok(())
     }
 }
 
@@ -574,24 +613,32 @@ pub struct PhysicsFacet {
     commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
-impl UserData for PhysicsFacet {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("velocity", |_, this, ()| {
-            let physics = unsafe { &*this.physics };
-            Ok(physics.linear_velocity(this.entity).unwrap_or(Vec2::ZERO))
-        });
-        methods.add_method("set_velocity", |_, this, velocity: Vec2| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.set_velocity(this.entity, velocity);
-            }
-            Ok(())
-        });
-        methods.add_method("apply_impulse", |_, this, impulse: Vec2| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.apply_impulse(this.entity, impulse);
-            }
-            Ok(())
-        });
+impl PhysicsFacet {
+    pub fn velocity(&mut self) -> RhaiResult<Vec2> {
+        let physics = unsafe { &*self.physics };
+        match physics.linear_velocity(self.entity) {
+            Some(v) => Ok(v),
+            None => Ok(Vec2::ZERO),
+        }
+    }
+
+    pub fn set_velocity(&mut self, velocity: Vec2) -> RhaiResult<()> {
+        eprintln!("[Script] PhysicsFacet::set_velocity called: entity={}, velocity=({}, {})", self.entity.to_u32(), velocity.x, velocity.y);
+        if let Ok(mut commands) = self.commands.lock() {
+            eprintln!("[Script] Got command buffer lock, queuing SetVelocity command");
+            commands.set_velocity(self.entity, velocity);
+            eprintln!("[Script] SetVelocity command queued successfully");
+        } else {
+            eprintln!("[Script] ERROR: Failed to lock command buffer!");
+        }
+        Ok(())
+    }
+
+    pub fn apply_impulse(&mut self, impulse: Vec2) -> RhaiResult<()> {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.apply_impulse(self.entity, impulse);
+        }
+        Ok(())
     }
 }
 
@@ -601,30 +648,25 @@ pub struct SpriteFacet {
     commands: Arc<Mutex<ScriptCommandBuffer>>,
 }
 
-impl UserData for SpriteFacet {
-    fn add_methods<'lua, M: UserDataMethods<'lua, Self>>(methods: &mut M) {
-        methods.add_method("set_visible", |_, this, visible: bool| {
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.set_sprite_visibility(this.entity, visible);
-            }
-            Ok(())
-        });
-        methods.add_method("set_tint", |_, this, tint: mlua::Table| {
-            let r: f64 = tint.get(1)?;
-            let g: f64 = tint.get(2)?;
-            let b: f64 = tint.get(3)?;
-            let a: f64 = tint.get(4)?;
-            if let Ok(mut commands) = this.commands.lock() {
-                commands.set_sprite_tint(this.entity, [r as f32, g as f32, b as f32, a as f32]);
-            }
-            Ok(())
-        });
+impl SpriteFacet {
+    pub fn set_visible(&mut self, visible: bool) -> RhaiResult<()> {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_sprite_visibility(self.entity, visible);
+        }
+        Ok(())
+    }
+
+    pub fn set_tint(&mut self, tint: [f32; 4]) -> RhaiResult<()> {
+        if let Ok(mut commands) = self.commands.lock() {
+            commands.set_sprite_tint(self.entity, tint);
+        }
+        Ok(())
     }
 }
 
 /// Central runtime that owns the embedded scripting engine and per-entity instances.
 pub struct ScriptRuntime {
-    lua: Lua,
+    engine: Engine,
     modules: HashMap<String, ScriptModule>,
     instances: BTreeMap<ScriptInstanceKey, ScriptInstance>,
     command_buffer: Arc<Mutex<ScriptCommandBuffer>>,
@@ -632,47 +674,29 @@ pub struct ScriptRuntime {
 }
 
 impl ScriptRuntime {
-    /// Create a new runtime with Lua backend and built-in API bindings.
-    pub fn new() -> Result<Self> {
-        let lua = Lua::new();
-        
-        // Register print function
-        let print_func = lua.create_function(|_, msg: String| {
-            println!("[LUA] {}", msg);
-            Ok(())
-        })?;
-        lua.globals().set("print", print_func)?;
+    /// Create a new runtime with Rhai backend and built-in API bindings.
+    pub fn new() -> Self {
+        let mut engine = Engine::new();
+        engine.on_print(|msg| {
+            println!("[RHAI] {}", msg);
+        });
+        engine.on_debug(|msg, src, pos| {
+            println!(
+                "[RHAI DEBUG] {} @ {}:{}",
+                msg,
+                src.unwrap_or("<unnamed script>"),
+                pos
+            );
+        });
+        register_rhai_types(&mut engine);
 
-        // Register Vec2 type
-        lua.register_userdata_type::<Vec2>(|reg| {
-            reg.add_method("x", |_, this, ()| Ok(this.x));
-            reg.add_method("y", |_, this, ()| Ok(this.y));
-            reg.add_method_mut("set_x", |_, this, x: f64| {
-                this.x = x as f32;
-                Ok(())
-            });
-            reg.add_method_mut("set_y", |_, this, y: f64| {
-                this.y = y as f32;
-                Ok(())
-            });
-        })?;
-
-        // Register vec2 function
-        let vec2_func = lua.create_function(|_, (x, y): (f64, f64)| {
-            Ok(Vec2::new(x as f32, y as f32))
-        })?;
-        lua.globals().set("vec2", vec2_func)?;
-
-        // UserData types are automatically registered when first used
-        // No explicit registration needed - the UserData impl provides the methods
-
-        Ok(Self {
-            lua,
+        Self {
+            engine,
             modules: HashMap::new(),
             instances: BTreeMap::new(),
             command_buffer: Arc::new(Mutex::new(ScriptCommandBuffer::default())),
             hot_reload: false,
-        })
+        }
     }
 
     /// Toggle hot reload for script files on disk.
@@ -780,8 +804,7 @@ impl ScriptRuntime {
                     (true, true) => "on_trigger_enter",
                     (true, false) => "on_trigger_exit",
                 };
-                let globals = self.lua.globals();
-                self.call_script_fn(&globals, function_name, (ctx, other.to_u32() as i64))?;
+                ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, function_name, (ctx, other.to_u32() as i64))?;
             }
         }
 
@@ -811,19 +834,6 @@ impl ScriptRuntime {
 
                 if !self.instances.contains_key(&key) {
                     let module = &self.modules[&attachment.path];
-                    // Set up params in globals for this script
-                    let globals = self.lua.globals();
-                    let params_table = self.lua.create_table()?;
-                    for (k, v) in &attachment.params.values {
-                        match v {
-                            ScriptValue::Number(n) => params_table.set(k.as_str(), *n)?,
-                            ScriptValue::Bool(b) => params_table.set(k.as_str(), *b)?,
-                            ScriptValue::Text(s) => params_table.set(k.as_str(), s.as_str())?,
-                            ScriptValue::Vec2(v) => params_table.set(k.as_str(), v.clone())?,
-                        }
-                    }
-                    globals.set("params", params_table)?;
-                    
                     self.instances.insert(
                         key,
                         ScriptInstance::new(
@@ -846,19 +856,6 @@ impl ScriptRuntime {
                     }
 
                     let module = &self.modules[&attachment.path];
-                    // Set up params in globals
-                    let globals = self.lua.globals();
-                    let params_table = self.lua.create_table()?;
-                    for (k, v) in &attachment.params.values {
-                        match v {
-                            ScriptValue::Number(n) => params_table.set(k.as_str(), *n)?,
-                            ScriptValue::Bool(b) => params_table.set(k.as_str(), *b)?,
-                            ScriptValue::Text(s) => params_table.set(k.as_str(), s.as_str())?,
-                            ScriptValue::Vec2(v) => params_table.set(k.as_str(), v.clone())?,
-                        }
-                    }
-                    globals.set("params", params_table)?;
-                    
                     self.instances.insert(
                         key,
                         ScriptInstance::new(
@@ -872,26 +869,6 @@ impl ScriptRuntime {
 
                 if let Some(mut instance) = self.instances.remove(&key) {
                     if !instance.has_started {
-                        // Execute the script to load functions into globals
-                        let module = &self.modules[&instance.script_path];
-                        eprintln!("[Script] Executing script for instance: {}", instance.script_path);
-                        let chunk = self.lua.load(&module.source).set_name(&instance.script_path);
-                        if let Err(e) = chunk.exec() {
-                            eprintln!("[Script] Error executing script {}: {}", instance.script_path, e);
-                            return Err(anyhow!("Failed to execute script: {}", e));
-                        }
-                        eprintln!("[Script] Script executed successfully");
-                        
-                        // Verify functions are in globals (drop the reference before mutable borrow)
-                        {
-                            let globals = self.lua.globals();
-                            if globals.get::<_, mlua::Function>("on_fixed_update").is_ok() {
-                                eprintln!("[Script] on_fixed_update found in globals");
-                            } else {
-                                eprintln!("[Script] WARNING: on_fixed_update NOT found in globals after execution!");
-                            }
-                        }
-                        
                         self.run_create_and_start(&mut instance, world, physics, input)?;
                     }
 
@@ -921,16 +898,7 @@ impl ScriptRuntime {
         fixed_dt: f32,
         stage: ScriptStage,
     ) -> Result<()> {
-        for instance in self.instances.values() {
-            // Re-execute the script to ensure functions are in globals
-            // This is needed because functions might not persist between calls
-            let module = &self.modules[&instance.script_path];
-            let chunk = self.lua.load(&module.source).set_name(&instance.script_path);
-            if let Err(e) = chunk.exec() {
-                eprintln!("[Script] Error re-executing script {}: {}", instance.script_path, e);
-                continue;
-            }
-            
+        for instance in self.instances.values_mut() {
             let ctx = ScriptSelf::new(
                 instance.key.entity,
                 world,
@@ -947,15 +915,16 @@ impl ScriptRuntime {
                 ScriptStage::Draw => ("on_draw", false),
             };
 
-            let globals = self.lua.globals();
             if include_dt {
-                self.call_script_fn(
-                    &globals,
+                ScriptRuntime::call_script_fn(
+                    &self.engine,
+                    &self.modules,
+                    instance,
                     fn_name,
                     (ctx, if stage == ScriptStage::Update { dt } else { fixed_dt }),
                 )?;
             } else {
-                self.call_script_fn(&globals, fn_name, (ctx,))?;
+                ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, fn_name, (ctx,))?;
             }
         }
         Ok(())
@@ -968,8 +937,20 @@ impl ScriptRuntime {
         physics: &PhysicsWorld,
         input: &InputState,
     ) -> Result<()> {
-        // Script should already be executed in sync_instances
-        let globals = self.lua.globals();
+        eprintln!("[Script] Evaluating AST for script: {}", instance.script_path);
+        let ast = &self.modules[&instance.script_path].ast;
+        match self.engine.eval_ast_with_scope::<Dynamic>(&mut instance.scope, ast) {
+            Ok(result) => {
+                eprintln!("[Script] AST evaluation successful for: {}", instance.script_path);
+                eprintln!("[Script] Evaluation result type: {:?}", result.type_name());
+            },
+            Err(e) => {
+                eprintln!("[Script] ERROR evaluating AST for {}: {}", instance.script_path, e);
+                eprintln!("[Script] Error details: {:?}", e);
+                return Err(anyhow!(e.to_string()));
+            },
+        }
+
         let ctx = ScriptSelf::new(
             instance.key.entity,
             world,
@@ -980,13 +961,8 @@ impl ScriptRuntime {
             0.0,
         );
 
-        // Check if functions exist before calling
-        if globals.get::<_, mlua::Function>("on_create").is_ok() {
-            self.call_script_fn(&globals, "on_create", (ctx.clone(),))?;
-        }
-        if globals.get::<_, mlua::Function>("on_start").is_ok() {
-            self.call_script_fn(&globals, "on_start", (ctx,))?;
-        }
+        ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, "on_create", (ctx.clone(),))?;
+        ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, "on_start", (ctx,))?;
 
         instance.has_started = true;
         Ok(())
@@ -999,7 +975,6 @@ impl ScriptRuntime {
         physics: &PhysicsWorld,
         input: &InputState,
     ) -> Result<()> {
-        let globals = self.lua.globals();
         let ctx = ScriptSelf::new(
             instance.key.entity,
             world,
@@ -1010,7 +985,7 @@ impl ScriptRuntime {
             0.0,
         );
 
-        self.call_script_fn(&globals, "on_destroy", (ctx,))?;
+        ScriptRuntime::call_script_fn(&self.engine, &self.modules, instance, "on_destroy", (ctx,))?;
 
         Ok(())
     }
@@ -1020,40 +995,99 @@ impl ScriptRuntime {
             return Ok(());
         }
 
+        eprintln!("[Script] Loading module: {}", path);
         let contents = fs::read_to_string(Path::new(path))
             .map_err(|err| anyhow!("Failed to load script {path}: {err}"))?;
+        eprintln!("[Script] Script file size: {} bytes", contents.len());
+        
+        // Check if the function is in the source
+        if contents.contains("on_fixed_update") {
+            eprintln!("[Script] Found 'on_fixed_update' in source code");
+        } else {
+            eprintln!("[Script] WARNING: 'on_fixed_update' NOT found in source code!");
+        }
 
+        let ast = match self.engine.compile(&contents) {
+            Ok(ast) => {
+                eprintln!("[Script] Successfully compiled script: {}", path);
+                ast
+            },
+            Err(e) => {
+                eprintln!("[Script] ERROR compiling script {}: {}", path, e);
+                eprintln!("[Script] Compilation error details: {:?}", e);
+                return Err(anyhow!("Failed to compile script {path}: {e}"));
+            },
+        };
+        
         let modified = fs::metadata(path).ok().and_then(|m| m.modified().ok());
         self.modules
-            .insert(path.to_string(), ScriptModule { source: contents, modified });
+            .insert(path.to_string(), ScriptModule { ast, modified });
         Ok(())
     }
 
-    fn call_script_fn<'lua, A>(
-        &'lua self,
-        globals: &mlua::Table<'lua>,
+    fn call_script_fn<A: rhai::FuncArgs + Clone>(
+        engine: &Engine,
+        modules: &HashMap<String, ScriptModule>,
+        instance: &mut ScriptInstance,
         name: &str,
         args: A,
-    ) -> Result<()>
-    where
-        A: mlua::IntoLuaMulti<'lua>,
-    {
-        match globals.get::<_, mlua::Function<'lua>>(name) {
-            Ok(func) => {
-                if let Err(e) = func.call::<_, ()>(args) {
-                    eprintln!("[Script] Error calling {}: {}", name, e);
-                    return Err(anyhow!("Lua error in {}: {}", name, e));
-                }
+    ) -> Result<()> {
+        eprintln!("[Script] Calling function: {} from script: {}", name, instance.script_path);
+        
+        let ast = &modules[&instance.script_path].ast;
+        
+        // Always evaluate AST before calling - Rhai requires functions to be in scope
+        // Multiple evaluations are safe (idempotent for function definitions)
+        if let Err(e) = engine.eval_ast_with_scope::<Dynamic>(&mut instance.scope, ast) {
+            eprintln!("[Script] WARNING: Failed to evaluate AST before calling {}: {}", name, e);
+        }
+        
+        // Clone args since we might need to use it again in the error handler
+        let args_clone = args.clone();
+        match engine.call_fn::<Dynamic>(&mut instance.scope, ast, name, args) {
+            Ok(_) => {
+                eprintln!("[Script] Function {} completed successfully", name);
                 Ok(())
-            }
-            Err(e) => {
-                // Function doesn't exist, which is OK for optional callbacks
-                // Only log if it's not a "key not found" type error
-                if !e.to_string().contains("bad argument") {
-                    // This is expected for optional callbacks, so we don't error
-                }
-                Ok(())
-            }
+            },
+            Err(err) => match *err {
+                EvalAltResult::ErrorFunctionNotFound(..) => {
+                    // Function not found - this might mean the AST wasn't evaluated yet
+                    // Try evaluating it now and then calling again
+                    eprintln!("[Script] Function {} not found, evaluating AST first...", name);
+                    match engine.eval_ast_with_scope::<Dynamic>(&mut instance.scope, ast) {
+                        Ok(_) => {
+                            eprintln!("[Script] AST evaluated, trying call_fn again...");
+                            match engine.call_fn::<Dynamic>(&mut instance.scope, ast, name, args_clone) {
+                                Ok(_) => {
+                                    eprintln!("[Script] Function {} completed successfully after AST eval", name);
+                                    Ok(())
+                                },
+                                Err(err2) => match *err2 {
+                                    EvalAltResult::ErrorFunctionNotFound(..) => {
+                                        eprintln!("[Script] Function {} still not found after AST eval (this is OK)", name);
+                                        Ok(())
+                                    },
+                                    _ => {
+                                        eprintln!("[Script] ERROR in {} after AST eval: {}", name, err2);
+                                        Err(anyhow!(err2.to_string()))
+                                    },
+                                },
+                            }
+                        },
+                        Err(e) => {
+                            eprintln!("[Script] ERROR evaluating AST: {}", e);
+                            eprintln!("[Script] Function {} not found (this is OK)", name);
+                            Ok(())
+                        },
+                    }
+                },
+                _ => {
+                    eprintln!("[Script] ERROR in {}: {}", name, err);
+                    eprintln!("[Script] Error position: {:?}", err.position());
+                    eprintln!("[Script] Error details: {:?}", err);
+                    Err(anyhow!(err.to_string()))
+                },
+            },
         }
     }
 }
@@ -1063,6 +1097,57 @@ enum ScriptStage {
     Update,
     FixedUpdate,
     Draw,
+}
+
+fn register_rhai_types(engine: &mut Engine) {
+    engine.register_type_with_name::<Vec2>("Vec2");
+    engine.register_fn("vec2", Vec2::new);
+    engine.register_get_set("x", |v: &mut Vec2| v.x, |v: &mut Vec2, x| v.x = x);
+    engine.register_get_set("y", |v: &mut Vec2| v.y, |v: &mut Vec2, y| v.y = y);
+
+    engine.register_type_with_name::<ScriptSelf>("Self");
+    engine.register_fn("entity", ScriptSelf::entity);
+    engine.register_fn("time", ScriptSelf::time);
+    engine.register_get("input", ScriptSelf::input);
+    engine.register_fn("world", ScriptSelf::world);
+    engine.register_fn("transform", ScriptSelf::transform);
+    engine.register_fn("physics", ScriptSelf::physics);
+    engine.register_fn("sprite", ScriptSelf::sprite);
+    engine.register_fn("position", ScriptSelf::position);
+    engine.register_fn("set_position", ScriptSelf::set_position);
+    engine.register_fn("apply_impulse", ScriptSelf::apply_impulse);
+
+    engine.register_type_with_name::<TimeFacet>("Time");
+    engine.register_fn("delta", TimeFacet::delta);
+    engine.register_fn("fixed_delta", TimeFacet::fixed_delta);
+
+    engine.register_type_with_name::<InputFacet>("Input");
+    engine.register_fn("is_key_down", InputFacet::is_key_down);
+    engine.register_fn("is_key_pressed", InputFacet::is_key_pressed);
+    engine.register_fn("is_key_released", InputFacet::is_key_released);
+    engine.register_fn("mouse_pos_screen", InputFacet::mouse_pos_screen);
+
+    engine.register_type_with_name::<WorldFacet>("World");
+    engine.register_fn("find_by_tag", WorldFacet::find_by_tag);
+    engine.register_fn("despawn", WorldFacet::despawn);
+    engine.register_fn("spawn_dynamic", WorldFacet::spawn_dynamic);
+    engine.register_fn("spawn_empty", WorldFacet::spawn_empty);
+
+    engine.register_type_with_name::<TransformFacet>("Transform");
+    engine.register_fn("position", TransformFacet::position);
+    engine.register_fn("rotation", TransformFacet::rotation);
+    engine.register_fn("set_position", TransformFacet::set_position);
+    engine.register_fn("set_rotation", TransformFacet::set_rotation);
+    engine.register_fn("set_scale", TransformFacet::set_scale);
+
+    engine.register_type_with_name::<PhysicsFacet>("Physics");
+    engine.register_fn("velocity", PhysicsFacet::velocity);
+    engine.register_fn("set_velocity", PhysicsFacet::set_velocity);
+    engine.register_fn("apply_impulse", PhysicsFacet::apply_impulse);
+
+    engine.register_type_with_name::<SpriteFacet>("Sprite");
+    engine.register_fn("set_visible", SpriteFacet::set_visible);
+    engine.register_fn("set_tint", SpriteFacet::set_tint);
 }
 
 fn parse_key(name: &str) -> Option<winit::keyboard::KeyCode> {
@@ -1079,5 +1164,15 @@ fn parse_key(name: &str) -> Option<winit::keyboard::KeyCode> {
         "Up" | "up" => Some(KeyCode::ArrowUp),
         "Down" | "down" => Some(KeyCode::ArrowDown),
         _ => None,
+    }
+}
+
+impl TryFrom<Dynamic> for Vec2 {
+    type Error = Box<EvalAltResult>;
+
+    fn try_from(value: Dynamic) -> Result<Self, Self::Error> {
+        value
+            .try_cast::<Vec2>()
+            .ok_or_else(|| "Expected Vec2".into())
     }
 }

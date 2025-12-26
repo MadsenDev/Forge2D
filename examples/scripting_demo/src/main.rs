@@ -21,16 +21,19 @@ struct ScriptingDemo {
 }
 
 impl ScriptingDemo {
-    fn new() -> Self {
-        Self {
-            runtime: ScriptRuntime::new(),
+    fn new() -> Result<Self> {
+        let mut physics = PhysicsWorld::new();
+        physics.set_gravity(Vec2::new(0.0, 500.0)); // Stronger gravity for better feel
+        
+        Ok(Self {
+            runtime: ScriptRuntime::new()?,
             world: World::new(),
-            physics: PhysicsWorld::new(),
+            physics,
             camera: Camera2D::new(Vec2::ZERO),
             player: None,
             player_texture: None,
             platform_texture: None,
-        }
+        })
     }
 
     fn create_textures(&mut self, renderer: &mut Renderer) -> Result<()> {
@@ -50,7 +53,8 @@ impl ScriptingDemo {
     }
 
     fn spawn_player(&mut self) -> Result<()> {
-        let position = Vec2::new(240.0, 360.0);
+        // Start player higher up so they fall onto the ground platform
+        let position = Vec2::new(240.0, 200.0);
         let entity = self.world.spawn();
 
         self.world.insert(entity, Transform::new(position));
@@ -68,12 +72,12 @@ impl ScriptingDemo {
         let params = ScriptParams::default()
             // Give the scripted controller enough speed and jump strength to feel responsive.
             .insert("speed", 200.0)
-            .insert("jump", 75.0);
+            .insert("jump", 300.0); // Increased jump to compensate for stronger gravity
 
         // Use an absolute path so the script loads correctly when running from the
         // example's package directory.
         let script_path = format!(
-            "{}/scripts/scripting_demo_player.rhai",
+            "{}/scripts/scripting_demo_player.lua",
             env!("CARGO_MANIFEST_DIR")
         );
 
@@ -91,8 +95,8 @@ impl ScriptingDemo {
         self.physics
             .create_body(entity, RigidBodyType::Dynamic, position, 0.0)?;
         self.physics.lock_rotations(entity, true);
-        // Keep some damping for stability but avoid over-damping horizontal movement.
-        self.physics.set_linear_damping(entity, 0.5);
+        // Lower damping for more responsive movement
+        self.physics.set_linear_damping(entity, 0.1);
         self.physics.add_collider_with_material(
             entity,
             ColliderShape::Box { hx: 16.0, hy: 16.0 },
@@ -108,13 +112,22 @@ impl ScriptingDemo {
 
     fn spawn_platform(&mut self, center: Vec2, size: Vec2) -> Result<()> {
         let entity = self.world.spawn();
-        self.world.insert(entity, Transform::new(center));
+        
+        // Calculate scale based on desired size and texture size (64x64)
+        let texture_size = Vec2::new(64.0, 64.0);
+        let scale = Vec2::new(size.x / texture_size.x, size.y / texture_size.y);
+        
+        // Create transform with position and calculated scale
+        let mut transform = Transform::new(center);
+        transform.scale = scale;
+        self.world.insert(entity, transform);
 
         if let Some(texture) = self.platform_texture {
             let mut sprite = SpriteComponent::new(texture);
+            // Set size using the scale we calculated
             sprite
                 .sprite
-                .set_size_px(Vec2::new(size.x, size.y), Vec2::new(64.0, 64.0));
+                .set_size_px(Vec2::new(size.x, size.y), texture_size);
             sprite.sprite.tint = [0.3, 0.35, 0.4, 1.0];
             self.world.insert(entity, sprite);
         }
@@ -179,13 +192,16 @@ impl ScriptingDemo {
     }
 
     fn update_camera(&mut self) {
-        if let Some(player) = self.player {
-            if let Some(transform) = self.world.get::<Transform>(player) {
-                // Camera position represents the center of the view, so align it with the
-                // player's world position just like the other demos.
-                self.camera.position = transform.position;
-            }
-        }
+        // Temporarily disable camera follow to see if player is moving
+        // if let Some(player) = self.player {
+        //     if let Some(transform) = self.world.get::<Transform>(player) {
+        //         // Camera position represents the center of the view, so align it with the
+        //         // player's world position just like the other demos.
+        //         self.camera.position = transform.position;
+        //     }
+        // }
+        // Keep camera fixed for debugging
+        self.camera.position = Vec2::new(480.0, 270.0); // Center of 960x540 screen
     }
 }
 
@@ -210,6 +226,16 @@ impl ScriptingDemo {
 impl Game for ScriptingDemo {
     fn init(&mut self, ctx: &mut EngineContext) -> Result<()> {
         self.create_textures(ctx.renderer())?;
+        
+        // Spawn a ground platform first (at the bottom of the screen)
+        let screen_h = ctx.window().inner_size().height as f32;
+        let screen_w = ctx.window().inner_size().width as f32;
+        let ground_y = screen_h - 50.0;
+        self.spawn_platform(Vec2::new(480.0, ground_y), Vec2::new(960.0, 50.0))?;
+        
+        // Spawn a wall on the right side for wall jumping (visible on screen)
+        self.spawn_platform(Vec2::new(screen_w - 50.0, screen_h / 2.0), Vec2::new(50.0, screen_h - 100.0))?;
+        
         self.spawn_player()?;
         self.spawn_platform(Vec2::new(300.0, 420.0), Vec2::new(240.0, 24.0))?;
         self.spawn_platform(Vec2::new(520.0, 520.0), Vec2::new(420.0, 24.0))?;
@@ -276,5 +302,5 @@ fn main() -> Result<()> {
     Engine::new()
         .with_title("Forge2D Scripting Demo")
         .with_size(960, 540)
-        .run(ScriptingDemo::new())
+        .run(ScriptingDemo::new()?)
 }
